@@ -17,6 +17,28 @@ export class CrashSignal extends Error {
   }
 }
 
+/** Signal thrown when a step failed an attempt and has been scheduled for retry. */
+export class StepRetryingSignal extends Error {
+  constructor(
+    public readonly step: string,
+    public readonly attempt: number,
+    public readonly runAt: Date,
+  ) {
+    super(`Step "${step}" failed attempt ${attempt}; retry scheduled at ${runAt.toISOString()}`);
+    this.name = "StepRetryingSignal";
+  }
+}
+
+export class StepTimeoutError extends Error {
+  constructor(
+    public readonly step: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`Step "${step}" timed out after ${timeoutMs}ms`);
+    this.name = "StepTimeoutError";
+  }
+}
+
 export class StepFailedError extends Error {
   constructor(
     public readonly step: string,

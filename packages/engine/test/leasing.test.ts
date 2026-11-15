@@ -29,7 +29,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     const engine = new Engine(pool, { dummy: async () => 1 });
     const _runId = await engine.startRun("dummy", {});
 
-    const claimed1 = await claimTask(pool, "worker-a", 1000);
+    const claimed1 = await claimTask(pool, "worker-a", 1000, ["dummy"]);
     expect(claimed1).not.toBeNull();
     expect(claimed1?.status).toBe("running");
     expect(claimed1?.lease_owner).toBe("worker-a");
@@ -48,7 +48,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     const engine = new Engine(pool, { dummy: async () => 1 });
     const _runId = await engine.startRun("dummy", {});
 
-    const claimed = await claimTask(pool, "worker-hb", 500);
+    const claimed = await claimTask(pool, "worker-hb", 500, ["dummy"]);
     expect(claimed).not.toBeNull();
     const initialExpiry = new Date(claimed!.lease_expires_at!).getTime();
 
@@ -70,18 +70,18 @@ describe("Milestone 2 - Leasing primitives", () => {
     const _runId = await engine.startRun("dummy", {});
 
     // Claim with very short lease (50ms)
-    const claimed = await claimTask(pool, "worker-reap", 50);
+    const claimed = await claimTask(pool, "worker-reap", 50, ["dummy"]);
     expect(claimed).not.toBeNull();
 
     // Before expiry, reaper should not reap it
-    const reapedEarly = await reapTasks(pool);
+    const reapedEarly = await reapTasks(pool, undefined, ["dummy"]);
     expect(reapedEarly).not.toContain(claimed!.id);
 
     // Wait for lease to expire
     await new Promise((r) => setTimeout(r, 80));
 
     // After expiry, reaper returns it to pending
-    const reaped = await reapTasks(pool);
+    const reaped = await reapTasks(pool, undefined, ["dummy"]);
     expect(reaped).toContain(claimed!.id);
 
     const { rows } = await pool.query<{ status: string; lease_owner: string | null }>(
@@ -97,17 +97,17 @@ describe("Milestone 2 - Leasing primitives", () => {
     const _runId = await engine.startRun("dummy", {});
 
     // Worker 1 claims task with 50ms lease
-    const task = await claimTask(pool, "worker-1", 50);
+    const task = await claimTask(pool, "worker-1", 50, ["dummy"]);
     expect(task).not.toBeNull();
 
     // Worker 1 pauses (lease expires)
     await new Promise((r) => setTimeout(r, 80));
 
     // Reaper returns task to pending
-    await reapTasks(pool);
+    await reapTasks(pool, undefined, ["dummy"]);
 
     // Worker 2 claims the task
-    const task2 = await claimTask(pool, "worker-2", 2000);
+    const task2 = await claimTask(pool, "worker-2", 2000, ["dummy"]);
     expect(task2).not.toBeNull();
     expect(task2?.id).toBe(task!.id);
     expect(task2?.lease_owner).toBe("worker-2");
@@ -129,13 +129,13 @@ describe("Milestone 2 - Leasing primitives", () => {
     const engine = new Engine(pool, { dummy: async () => 1 });
     const _runId = await engine.startRun("dummy", {});
 
-    const task = await claimTask(pool, "worker-fail-1", 50);
+    const task = await claimTask(pool, "worker-fail-1", 50, ["dummy"]);
     expect(task).not.toBeNull();
 
     await new Promise((r) => setTimeout(r, 80));
-    await reapTasks(pool);
+    await reapTasks(pool, undefined, ["dummy"]);
 
-    const task2 = await claimTask(pool, "worker-fail-2", 2000);
+    const task2 = await claimTask(pool, "worker-fail-2", 2000, ["dummy"]);
     expect(task2).not.toBeNull();
     expect(task2?.lease_owner).toBe("worker-fail-2");
 

@@ -8,7 +8,7 @@ of executed, then diff against the original.
 - [x] Milestone 1: schema, append-only event log, `ctx.step`/`now`/`random`, replay,
       `NonDeterminismError`, crash-and-resume tests, fast-check property test
 - [x] Milestone 2: leasing (claim, heartbeat, reaper, fencing)
-- [ ] Milestone 3: retries, timeouts, idempotency keys
+- [x] Milestone 3: retries, timeouts, idempotency keys
 - [ ] Milestone 4: fork API, connectors with live/shadow modes
 - [ ] Milestone 5: inspector UI
 - [ ] Milestone 6: demo workflow, chaos script, README diagrams

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
+import { type Clock, SystemClock } from "./clock.js";
 import { type Ctx, RunContext, type RunContextOptions } from "./context.js";
-import { CrashSignal, FencingError, NonDeterminismError } from "./errors.js";
+import { CrashSignal, FencingError, NonDeterminismError, StepRetryingSignal } from "./errors.js";
 import { appendEvent, loadEvents } from "./events.js";
 import { reapTasks } from "./leasing.js";
 
@@ -9,26 +10,34 @@ export type WorkflowFn = (ctx: Ctx, input: any) => Promise<unknown>;
 
 export type RunOutcome =
   | { status: "completed"; result: unknown }
-  | { status: "failed"; error: string };
+  | { status: "failed"; error: string }
+  | { status: "running"; retrying?: { step: string; attempt: number; runAt: Date } };
 
-export type ExecuteOptions = RunContextOptions;
+export type ExecuteOptions = RunContextOptions & { clock?: Clock };
 
 export class Engine {
   constructor(
     private readonly pool: Pool,
     private readonly workflows: Record<string, WorkflowFn>,
+    private readonly clock: Clock = new SystemClock(),
   ) {}
 
   getPool(): Pool {
     return this.pool;
   }
 
+  getClock(): Clock {
+    return this.clock;
+  }
+
   getWorkflowTypes(): string[] {
     return Object.keys(this.workflows);
   }
 
-  async reap(): Promise<string[]> {
-    return reapTasks(this.pool);
+  async reap(now?: Date, workflowTypes?: string[]): Promise<string[]> {
+    const types =
+      workflowTypes ?? (this.getWorkflowTypes().length > 0 ? this.getWorkflowTypes() : undefined);
+    return reapTasks(this.pool, now ?? this.clock.now(), types);
   }
 
   async startRun(workflowType: string, input: unknown): Promise<string> {
@@ -43,8 +52,8 @@ export class Engine {
       const id = rows[0]!.id;
       await appendEvent(client, id, { type: "RunStarted", payload: { workflowType, input } });
       await client.query(
-        `INSERT INTO tasks (run_id, step_key, status) VALUES ($1, '__init__', 'pending')`,
-        [id],
+        `INSERT INTO tasks (run_id, step_key, status, run_at) VALUES ($1, '__init__', 'pending', $2)`,
+        [id, this.clock.now()],
       );
       await client.query("COMMIT");
       return id;
@@ -76,7 +85,8 @@ export class Engine {
     if (!fn) throw new Error(`Unknown workflow: ${run.workflow_type}`);
 
     const history = events.filter((e) => e.type !== "RunStarted");
-    const ctx = new RunContext(this.pool, runId, history, options);
+    const clock = options.clock ?? this.clock;
+    const ctx = new RunContext(this.pool, runId, history, { ...options, clock });
 
     try {
       const result = JSON.parse(JSON.stringify((await fn(ctx, run.input)) ?? null));
@@ -100,11 +110,17 @@ export class Engine {
 
       return { status: "completed", result };
     } catch (e) {
-      // Crashes and determinism bugs are infrastructure problems, not workflow outcomes:
+      // Crashes, retries, and determinism bugs are infrastructure / lifecycle signals:
       // leave the run resumable instead of marking it failed.
       if (e instanceof CrashSignal || e instanceof NonDeterminismError) throw e;
       if (e instanceof FencingError) throw e;
       if (e instanceof Error && e.name === "EventConflictError") throw e;
+      if (e instanceof StepRetryingSignal) {
+        return {
+          status: "running",
+          retrying: { step: e.step, attempt: e.attempt, runAt: e.runAt },
+        };
+      }
 
       const error = e instanceof Error ? e.message : String(e);
 

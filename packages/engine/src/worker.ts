@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type Clock, SystemClock } from "./clock.js";
 import type { Engine } from "./engine.js";
 import { FencingError } from "./errors.js";
 import { claimTask, completeTask } from "./leasing.js";
@@ -8,6 +9,7 @@ export interface WorkerOptions {
   leaseDurationMs?: number;
   heartbeatIntervalMs?: number;
   pollIntervalMs?: number;
+  clock?: Clock;
 }
 
 export class Worker {
@@ -15,8 +17,10 @@ export class Worker {
   public readonly leaseDurationMs: number;
   public readonly heartbeatIntervalMs: number;
   public readonly pollIntervalMs: number;
+  public readonly clock: Clock;
 
   private running = false;
+  private killed = false;
   private loopPromise?: Promise<void>;
   private heartbeatTimers = new Set<NodeJS.Timeout>();
 
@@ -28,10 +32,15 @@ export class Worker {
     this.leaseDurationMs = options.leaseDurationMs ?? 5000;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 1000;
     this.pollIntervalMs = options.pollIntervalMs ?? 50;
+    this.clock = options.clock ?? engine.getClock() ?? new SystemClock();
   }
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  get isKilled(): boolean {
+    return this.killed;
   }
 
   /**
@@ -39,13 +48,14 @@ export class Worker {
    * Returns true if a task was claimed and processed, false if no task was available.
    */
   async tick(): Promise<boolean> {
-    if (!this.running) return false;
+    if (this.killed) return false;
     const types = this.engine.getWorkflowTypes();
     const task = await claimTask(
       this.engine.getPool(),
       this.workerId,
       this.leaseDurationMs,
       types.length > 0 ? types : undefined,
+      this.clock.now(),
     );
     if (!task) return false;
 
@@ -64,6 +74,7 @@ export class Worker {
         activeTask: task,
         leaseDurationMs: this.leaseDurationMs,
         heartbeatIntervalMs: this.heartbeatIntervalMs,
+        clock: this.clock,
         registerHeartbeat: (timer) => this.heartbeatTimers.add(timer),
         unregisterHeartbeat: (timer) => this.heartbeatTimers.delete(timer),
       });
@@ -82,7 +93,7 @@ export class Worker {
    * Starts background polling loop.
    */
   start(): void {
-    if (this.running) return;
+    if (this.running || this.killed) return;
     this.running = true;
     this.loopPromise = (async () => {
       while (this.running) {
@@ -116,6 +127,7 @@ export class Worker {
    * without updating database tasks, simulating process crash / SIGKILL.
    */
   kill(): void {
+    this.killed = true;
     this.running = false;
     for (const timer of this.heartbeatTimers) {
       clearInterval(timer);

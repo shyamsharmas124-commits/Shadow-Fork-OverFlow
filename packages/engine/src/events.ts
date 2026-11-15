@@ -23,6 +23,7 @@ export const EventSchema = z.discriminatedUnion("type", [
       inputHash: z.string(),
       input: z.unknown(),
       error: z.string(),
+      attempt: z.number().optional(),
     }),
   }),
   z.object({ type: z.literal("TimeRecorded"), payload: z.object({ value: z.number() }) }),

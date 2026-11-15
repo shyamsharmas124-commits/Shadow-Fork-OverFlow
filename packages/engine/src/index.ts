@@ -1,4 +1,11 @@
-export type { Ctx, RunContextOptions } from "./context.js";
+export { type Clock, ManualClock, SystemClock } from "./clock.js";
+export {
+  type Ctx,
+  makeIdempotencyKey,
+  type RunContextOptions,
+  type StepContext,
+  type StepOptions,
+} from "./context.js";
 export { Engine, type ExecuteOptions, type RunOutcome, type WorkflowFn } from "./engine.js";
 export {
   CrashSignal,
@@ -6,6 +13,8 @@ export {
   FencingError,
   NonDeterminismError,
   StepFailedError,
+  StepRetryingSignal,
+  StepTimeoutError,
 } from "./errors.js";
 export {
   appendEvent,
@@ -22,7 +31,9 @@ export {
   failTask,
   heartbeatTask,
   reapTasks,
+  scheduleRetry,
   type TaskRow,
 } from "./leasing.js";
 export { migrate } from "./migrate.js";
+export { calculateFullJitterBackoff, type RetryOptions } from "./retry.js";
 export { Worker, type WorkerOptions } from "./worker.js";
