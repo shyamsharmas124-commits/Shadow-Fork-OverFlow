@@ -19,6 +19,8 @@ export class Worker {
   public readonly pollIntervalMs: number;
   public readonly clock: Clock;
 
+  public lastFencingError?: FencingError;
+
   private running = false;
   private killed = false;
   private loopPromise?: Promise<void>;
@@ -82,6 +84,7 @@ export class Worker {
       return true;
     } catch (e) {
       if (e instanceof FencingError) {
+        this.lastFencingError = e;
         // Lost lease to another worker, safely ignored
         return true;
       }

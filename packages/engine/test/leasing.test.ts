@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -26,10 +27,11 @@ afterAll(async () => {
 
 describe("Milestone 2 - Leasing primitives", () => {
   it("claimTask atomically claims pending task with SKIP LOCKED", async () => {
-    const engine = new Engine(pool, { dummy: async () => 1 });
-    const _runId = await engine.startRun("dummy", {});
+    const wf = `claim_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => 1 });
+    const _runId = await engine.startRun(wf, {});
 
-    const claimed1 = await claimTask(pool, "worker-a", 1000, ["dummy"]);
+    const claimed1 = await claimTask(pool, "worker-a", 1000, [wf]);
     expect(claimed1).not.toBeNull();
     expect(claimed1?.status).toBe("running");
     expect(claimed1?.lease_owner).toBe("worker-a");
@@ -45,10 +47,11 @@ describe("Milestone 2 - Leasing primitives", () => {
   });
 
   it("heartbeat extends lease_expires_at", async () => {
-    const engine = new Engine(pool, { dummy: async () => 1 });
-    const _runId = await engine.startRun("dummy", {});
+    const wf = `hb_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => 1 });
+    const _runId = await engine.startRun(wf, {});
 
-    const claimed = await claimTask(pool, "worker-hb", 500, ["dummy"]);
+    const claimed = await claimTask(pool, "worker-hb", 500, [wf]);
     expect(claimed).not.toBeNull();
     const initialExpiry = new Date(claimed!.lease_expires_at!).getTime();
 
@@ -66,22 +69,23 @@ describe("Milestone 2 - Leasing primitives", () => {
   });
 
   it("reaper returns expired running tasks to pending", async () => {
-    const engine = new Engine(pool, { dummy: async () => 1 });
-    const _runId = await engine.startRun("dummy", {});
+    const wf = `reap_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => 1 });
+    const _runId = await engine.startRun(wf, {});
 
     // Claim with very short lease (50ms)
-    const claimed = await claimTask(pool, "worker-reap", 50, ["dummy"]);
+    const claimed = await claimTask(pool, "worker-reap", 50, [wf]);
     expect(claimed).not.toBeNull();
 
     // Before expiry, reaper should not reap it
-    const reapedEarly = await reapTasks(pool, undefined, ["dummy"]);
+    const reapedEarly = await reapTasks(pool, undefined, [wf]);
     expect(reapedEarly).not.toContain(claimed!.id);
 
     // Wait for lease to expire
     await new Promise((r) => setTimeout(r, 80));
 
     // After expiry, reaper returns it to pending
-    const reaped = await reapTasks(pool, undefined, ["dummy"]);
+    const reaped = await reapTasks(pool, undefined, [wf]);
     expect(reaped).toContain(claimed!.id);
 
     const { rows } = await pool.query<{ status: string; lease_owner: string | null }>(
@@ -93,21 +97,22 @@ describe("Milestone 2 - Leasing primitives", () => {
   });
 
   it("fencing prevents a zombie worker from completing a reassigned task", async () => {
-    const engine = new Engine(pool, { dummy: async () => 1 });
-    const _runId = await engine.startRun("dummy", {});
+    const wf = `fence_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => 1 });
+    const _runId = await engine.startRun(wf, {});
 
     // Worker 1 claims task with 50ms lease
-    const task = await claimTask(pool, "worker-1", 50, ["dummy"]);
+    const task = await claimTask(pool, "worker-1", 50, [wf]);
     expect(task).not.toBeNull();
 
     // Worker 1 pauses (lease expires)
     await new Promise((r) => setTimeout(r, 80));
 
     // Reaper returns task to pending
-    await reapTasks(pool, undefined, ["dummy"]);
+    await reapTasks(pool, undefined, [wf]);
 
     // Worker 2 claims the task
-    const task2 = await claimTask(pool, "worker-2", 2000, ["dummy"]);
+    const task2 = await claimTask(pool, "worker-2", 2000, [wf]);
     expect(task2).not.toBeNull();
     expect(task2?.id).toBe(task!.id);
     expect(task2?.lease_owner).toBe("worker-2");
@@ -126,16 +131,17 @@ describe("Milestone 2 - Leasing primitives", () => {
   });
 
   it("failTask respects fencing and rejects zombie worker", async () => {
-    const engine = new Engine(pool, { dummy: async () => 1 });
-    const _runId = await engine.startRun("dummy", {});
+    const wf = `fail_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => 1 });
+    const _runId = await engine.startRun(wf, {});
 
-    const task = await claimTask(pool, "worker-fail-1", 50, ["dummy"]);
+    const task = await claimTask(pool, "worker-fail-1", 50, [wf]);
     expect(task).not.toBeNull();
 
     await new Promise((r) => setTimeout(r, 80));
-    await reapTasks(pool, undefined, ["dummy"]);
+    await reapTasks(pool, undefined, [wf]);
 
-    const task2 = await claimTask(pool, "worker-fail-2", 2000, ["dummy"]);
+    const task2 = await claimTask(pool, "worker-fail-2", 2000, [wf]);
     expect(task2).not.toBeNull();
     expect(task2?.lease_owner).toBe("worker-fail-2");
 
@@ -152,8 +158,9 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
       step3: 0,
     };
 
-    let worker1Killed = false;
-    let worker1Ref: Worker | null = null;
+    let victimKilled = false;
+    let victimWorker: Worker | null = null;
+    const workerMap = new Map<string, Worker>();
 
     const multiStepWorkflow: WorkflowFn = async (ctx, input: { base: number }) => {
       const r1 = await ctx.step(
@@ -167,25 +174,29 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
 
       const r2 = await ctx.step(
         "step2",
-        async (n: number) => {
+        async (n: number, sctx) => {
           stepInvocations.step2++;
-          if (!worker1Killed && worker1Ref) {
-            worker1Killed = true;
-            // Mid-task kill: kill worker1 immediately while executing step2
-            worker1Ref.kill();
+          if (!victimKilled) {
+            victimKilled = true;
+            victimWorker = workerMap.get(sctx.workerId) ?? null;
+            // Mid-task kill: kill the executing worker immediately while executing step2
+            victimWorker?.kill();
             // Simulate process hang/death by stalling this worker until lease expires
-            await new Promise((resolve) => setTimeout(resolve, 250));
+            await new Promise((resolve) => setTimeout(resolve, 140));
+          } else {
+            // Surviving worker processes step2 while victim worker is waking up as a zombie
+            await new Promise((resolve) => setTimeout(resolve, 200));
           }
-          return n * 2;
+          return { val: n * 2, workerId: sctx.workerId };
         },
         r1,
       );
 
       const r3 = await ctx.step(
         "step3",
-        async (n: number) => {
+        async (input: { val: number; workerId: string }) => {
           stepInvocations.step3++;
-          return n + 5;
+          return input.val + 5;
         },
         r2,
       );
@@ -193,7 +204,8 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
       return { final: r3 };
     };
 
-    const engine = new Engine(pool, { multiStep: multiStepWorkflow });
+    const wf = `multiStep_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: multiStepWorkflow });
 
     // Fast lease (100ms) and heartbeats (25ms) for swift deterministic testing
     const worker1 = new Worker(engine, {
@@ -215,7 +227,9 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
       pollIntervalMs: 15,
     });
 
-    worker1Ref = worker1;
+    workerMap.set("worker-1", worker1);
+    workerMap.set("worker-2", worker2);
+    workerMap.set("worker-3", worker3);
 
     // Start all 3 workers
     worker1.start();
@@ -223,11 +237,11 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
     worker3.start();
 
     // Start a run
-    const runId = await engine.startRun("multiStep", { base: 5 });
+    const runId = await engine.startRun(wf, { base: 5 });
 
     // Background reaper interval to reap any expired tasks
     const reaperInterval = setInterval(async () => {
-      await engine.reap().catch(() => {});
+      await engine.reap(undefined, [wf]).catch(() => {});
     }, 30);
 
     // Wait until run completes
@@ -246,11 +260,14 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
     }
 
     clearInterval(reaperInterval);
+    await worker1.stop();
     await worker2.stop();
     await worker3.stop();
 
     expect(runCompleted).toBe(true);
-    expect(worker1Killed).toBe(true);
+    expect(victimKilled).toBe(true);
+    expect(victimWorker).not.toBeNull();
+    expect(victimWorker!.lastFencingError).toBeInstanceOf(FencingError);
 
     // Verify event log
     const events = await loadEvents(pool, runId);
@@ -264,6 +281,17 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
       "StepCompleted",
       "RunCompleted",
     ]);
+
+    // Assert strictly monotonic seq with no gaps: 1, 2, 3, 4, 5
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+
+    // Verify step2 was completed by a surviving worker, not the killed victim worker
+    const step2Event = events.find(
+      (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === "step2",
+    );
+    expect(step2Event).toBeDefined();
+    const step2Payload = step2Event!.payload as { result: { workerId: string } };
+    expect(step2Payload.result.workerId).not.toBe(victimWorker!.workerId);
 
     // Verify every step completed exactly once in the event log
     const completedStepNames = events

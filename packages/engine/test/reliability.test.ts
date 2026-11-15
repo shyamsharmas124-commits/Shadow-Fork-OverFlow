@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ManualClock } from "../src/clock.js";
-import { type Ctx, makeIdempotencyKey } from "../src/context.js";
+import { type Ctx, makeIdempotencyKey, RunContext } from "../src/context.js";
 import { Engine } from "../src/engine.js";
 import { loadEvents } from "../src/events.js";
 import { reapTasks } from "../src/leasing.js";
@@ -34,21 +34,31 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     // attempt 3: min(8000, 1000 * 2^2) = 4000
     // attempt 4: min(8000, 1000 * 2^3) = 8000
     // attempt 5: min(8000, 1000 * 2^4) = 8000 (capped at maxBackoffMs)
+    // 1. Assert ceilings separately (using max randomFn = 1.0)
     expect(calculateFullJitterBackoff(1, { ...options, randomFn: () => 1.0 })).toBe(1000);
     expect(calculateFullJitterBackoff(2, { ...options, randomFn: () => 1.0 })).toBe(2000);
     expect(calculateFullJitterBackoff(3, { ...options, randomFn: () => 1.0 })).toBe(4000);
     expect(calculateFullJitterBackoff(4, { ...options, randomFn: () => 1.0 })).toBe(8000);
     expect(calculateFullJitterBackoff(5, { ...options, randomFn: () => 1.0 })).toBe(8000);
 
-    // Random jitter bounds
-    for (let i = 0; i < 50; i++) {
-      const b1 = calculateFullJitterBackoff(1, options);
+    // 2. Assert each delay lies in [0, ceiling] over many seeded draws
+    let seed = 123456789;
+    const seededRandom = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    for (let i = 0; i < 200; i++) {
+      const b1 = calculateFullJitterBackoff(1, { ...options, randomFn: seededRandom });
       expect(b1).toBeGreaterThanOrEqual(0);
       expect(b1).toBeLessThanOrEqual(1000);
 
-      const b2 = calculateFullJitterBackoff(2, options);
+      const b2 = calculateFullJitterBackoff(2, { ...options, randomFn: seededRandom });
       expect(b2).toBeGreaterThanOrEqual(0);
       expect(b2).toBeLessThanOrEqual(2000);
+
+      const b3 = calculateFullJitterBackoff(3, { ...options, randomFn: seededRandom });
+      expect(b3).toBeGreaterThanOrEqual(0);
+      expect(b3).toBeLessThanOrEqual(4000);
     }
   });
 
@@ -449,5 +459,169 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     );
     expect(afterReap[0]!.status).toBe("pending");
     expect(afterReap[0]!.lease_owner).toBeNull();
+  });
+
+  it("replay-with-retries: replaying from history does not re-execute step and preserves live result and valid event sequence", async () => {
+    const clock = new ManualClock(new Date("2030-05-01T00:00:00.000Z"));
+    let executionCount = 0;
+    const wfType = `replay_retry_${randomUUID().slice(0, 8)}`;
+
+    const retryWorkflow = async (ctx: Ctx, input: { num: number }) => {
+      const stepRes = await ctx.step(
+        "flaky-step",
+        async (n: number) => {
+          executionCount++;
+          if (executionCount < 3) {
+            throw new Error(`Flaky failure ${executionCount}`);
+          }
+          return { value: n * 10, attempt: executionCount };
+        },
+        input.num,
+        {
+          maxAttempts: 3,
+          initialBackoffMs: 1000,
+          randomFn: () => 1.0,
+        },
+      );
+      return { final: stepRes.value };
+    };
+
+    const engine = new Engine(pool, { [wfType]: retryWorkflow }, clock);
+    const runId = await engine.startRun(wfType, { num: 42 });
+
+    // Attempt 1 fails
+    await engine.execute(runId);
+    expect(executionCount).toBe(1);
+
+    // Advance clock past backoff 1 (1000ms)
+    clock.advance(1000);
+    // Attempt 2 fails
+    await engine.execute(runId);
+    expect(executionCount).toBe(2);
+
+    // Advance clock past backoff 2 (2000ms)
+    clock.advance(2000);
+    // Attempt 3 succeeds
+    const liveOutcome = await engine.execute(runId);
+    expect(liveOutcome.status).toBe("completed");
+    if (liveOutcome.status === "completed") {
+      expect(liveOutcome.result).toEqual({ final: 420 });
+    }
+    expect(executionCount).toBe(3);
+
+    // Verify event sequence after live run
+    const events = await loadEvents(pool, runId);
+    expect(events.map((e) => e.type)).toEqual([
+      "RunStarted",
+      "StepFailed",
+      "StepFailed",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+
+    // Replay in a fresh worker / context from history
+    let replayExecutionCount = 0;
+    const replayWorkflowFn = async (ctx: Ctx, input: { num: number }) => {
+      const stepRes = await ctx.step(
+        "flaky-step",
+        async (n: number) => {
+          replayExecutionCount++;
+          return { value: n * 10, attempt: replayExecutionCount };
+        },
+        input.num,
+        {
+          maxAttempts: 3,
+          initialBackoffMs: 1000,
+        },
+      );
+      return { final: stepRes.value };
+    };
+
+    const history = events.filter((e) => e.type !== "RunStarted");
+    const replayCtx = new RunContext(pool, runId, history, { clock });
+    const replayResult = await replayWorkflowFn(replayCtx, { num: 42 });
+
+    // Step function was NOT re-executed during replay!
+    expect(replayExecutionCount).toBe(0);
+    // Result matches live result
+    expect(replayResult).toEqual({ final: 420 });
+  });
+
+  it("abandoned attempt: late resolution of step that ignores AbortSignal writes NO event and does not corrupt retry", async () => {
+    let attemptCount = 0;
+    let lateResolutionDone = false;
+    let lateResolutionValue: string | null = null;
+    const wfType = `abandoned_${randomUUID().slice(0, 8)}`;
+
+    const abandonedWorkflow = async (ctx: Ctx) => {
+      return await ctx.step(
+        "slow-step",
+        async (_input, _sctx) => {
+          attemptCount++;
+          if (attemptCount === 1) {
+            // Attempt 1 ignores AbortSignal and resolves late after timeout
+            return new Promise<{ res: string }>((resolve) => {
+              setTimeout(() => {
+                lateResolutionValue = "rogue-late-result";
+                lateResolutionDone = true;
+                resolve({ res: lateResolutionValue });
+              }, 120);
+            });
+          }
+          return { res: "clean-attempt-2" };
+        },
+        {},
+        {
+          timeoutMs: 40,
+          maxAttempts: 2,
+          initialBackoffMs: 10,
+        },
+      );
+    };
+
+    const engine = new Engine(pool, { [wfType]: abandonedWorkflow });
+    const runId = await engine.startRun(wfType, {});
+
+    // Attempt 1 executes and times out after 40ms
+    const outcome1 = await engine.execute(runId);
+    expect(outcome1.status).toBe("running");
+    expect(attemptCount).toBe(1);
+
+    // Wait past the 10ms backoff
+    await new Promise((r) => setTimeout(r, 25));
+
+    // Attempt 2 executes and succeeds
+    const outcome2 = await engine.execute(runId);
+    expect(outcome2.status).toBe("completed");
+    if (outcome2.status === "completed") {
+      expect(outcome2.result).toEqual({ res: "clean-attempt-2" });
+    }
+    expect(attemptCount).toBe(2);
+
+    // Now wait for attempt 1's late promise to resolve in the background (120ms total)
+    await new Promise((r) => setTimeout(r, 120));
+    expect(lateResolutionDone).toBe(true);
+    expect(lateResolutionValue).toBe("rogue-late-result");
+
+    // Assert the events table: exactly one StepCompleted with attempt 2's clean result, NO rogue event
+    const events = await loadEvents(pool, runId);
+    expect(events.map((e) => e.type)).toEqual([
+      "RunStarted",
+      "StepFailed",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+
+    const stepCompletedEvent = events.find((e) => e.type === "StepCompleted");
+    expect(stepCompletedEvent).toBeDefined();
+    const cleanPayload = stepCompletedEvent!.payload as { result: { res: string } };
+    expect(cleanPayload.result).toEqual({
+      res: "clean-attempt-2",
+    });
+
+    // Assert that rogue late result is nowhere in the database events
+    const allPayloads = JSON.stringify(events.map((e) => e.payload));
+    expect(allPayloads).not.toContain("rogue-late-result");
   });
 });

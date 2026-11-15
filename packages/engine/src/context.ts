@@ -17,6 +17,7 @@ export interface StepContext {
   idempotencyKey: string;
   attempt: number;
   signal: AbortSignal;
+  workerId: string;
 }
 
 export interface StepOptions extends RetryOptions {
@@ -238,6 +239,7 @@ export class RunContext implements Ctx {
         idempotencyKey,
         attempt: currentAttempt,
         signal: abortController.signal,
+        workerId,
       }),
     );
 
