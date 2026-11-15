@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS runs (
   input            jsonb       NOT NULL,
   parent_run_id    uuid        REFERENCES runs(id),
   forked_from_seq  integer,
+  fork_edit        jsonb,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
 

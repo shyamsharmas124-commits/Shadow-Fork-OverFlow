@@ -42,6 +42,7 @@ export interface RunContextOptions {
   heartbeatIntervalMs?: number;
   activeTask?: TaskRow;
   clock?: Clock;
+  forkEdit?: { atSeq: number; stepName: string; input?: unknown } | null;
   onHeartbeatLost?: (taskId: string) => void;
   registerHeartbeat?: (timer: NodeJS.Timeout) => void;
   unregisterHeartbeat?: (timer: NodeJS.Timeout) => void;
@@ -64,6 +65,7 @@ export function makeIdempotencyKey(runId: string, stepKey: string): string {
 export class RunContext implements Ctx {
   private cursor = 0;
   private readonly clock: Clock;
+  private readonly forkEdit?: { atSeq: number; stepName: string; input?: unknown } | null;
 
   constructor(
     private readonly pool: Pool,
@@ -72,6 +74,7 @@ export class RunContext implements Ctx {
     private readonly options: RunContextOptions = {},
   ) {
     this.clock = options.clock ?? new SystemClock();
+    this.forkEdit = options.forkEdit;
   }
 
   /** True while there is recorded history left to replay. */
@@ -89,7 +92,11 @@ export class RunContext implements Ctx {
     input: I,
     options?: StepOptions,
   ): Promise<O> {
-    const inputHash = hashInput(input);
+    let effectiveInput = input;
+    if (this.forkEdit && this.forkEdit.stepName === name && "input" in this.forkEdit) {
+      effectiveInput = this.forkEdit.input as I;
+    }
+    const inputHash = hashInput(effectiveInput);
     const label = `Step(${name})`;
 
     // Replay check
@@ -166,16 +173,22 @@ export class RunContext implements Ctx {
     } else {
       const { rows } = await this.pool.query<{
         id: string;
+        step_key: string;
         status: string;
         lease_owner: string | null;
         attempt: number;
         run_at: Date;
       }>(
-        `SELECT id, status, lease_owner, attempt, run_at FROM tasks
-         WHERE run_id = $1 AND step_key = $2 AND status != 'completed'
-         ORDER BY run_at DESC LIMIT 1`,
+        `SELECT id, step_key, status, lease_owner, attempt, run_at FROM tasks
+         WHERE run_id = $1 AND (step_key = $2 OR step_key = '__init__') AND status != 'completed'
+         ORDER BY (step_key = $2) DESC, run_at DESC LIMIT 1`,
         [this.runId, name],
       );
+
+      if (rows.length > 0 && rows[0]!.step_key === "__init__") {
+        await this.pool.query(`UPDATE tasks SET step_key = $1 WHERE id = $2`, [name, rows[0]!.id]);
+        rows[0]!.step_key = name;
+      }
 
       if (rows.length > 0 && rows[0]!.status === "running" && rows[0]!.lease_owner === workerId) {
         taskId = rows[0]!.id;
@@ -235,7 +248,7 @@ export class RunContext implements Ctx {
     const abortController = new AbortController();
     let timeoutTimer: NodeJS.Timeout | undefined;
     let stepPromise = Promise.resolve().then(() =>
-      fn(input, {
+      fn(effectiveInput, {
         idempotencyKey,
         attempt: currentAttempt,
         signal: abortController.signal,
@@ -273,7 +286,7 @@ export class RunContext implements Ctx {
         await completeTask(client, taskId, workerId);
         await appendEvent(client, this.runId, {
           type: "StepCompleted",
-          payload: { name, inputHash, input, result },
+          payload: { name, inputHash, input: effectiveInput, result },
         });
         await client.query("COMMIT");
       } catch (err) {
@@ -315,7 +328,7 @@ export class RunContext implements Ctx {
           await scheduleRetry(client, taskId, workerId, runAt);
           await appendEvent(client, this.runId, {
             type: "StepFailed",
-            payload: { name, inputHash, input, error, attempt: currentAttempt },
+            payload: { name, inputHash, input: effectiveInput, error, attempt: currentAttempt },
           });
           await client.query("COMMIT");
         } catch (err) {
@@ -333,7 +346,7 @@ export class RunContext implements Ctx {
           await failTask(client, taskId, workerId);
           await appendEvent(client, this.runId, {
             type: "StepFailed",
-            payload: { name, inputHash, input, error, attempt: currentAttempt },
+            payload: { name, inputHash, input: effectiveInput, error, attempt: currentAttempt },
           });
           await client.query("COMMIT");
         } catch (err) {

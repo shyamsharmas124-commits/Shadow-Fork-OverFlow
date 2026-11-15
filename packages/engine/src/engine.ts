@@ -8,6 +8,8 @@ import { reapTasks } from "./leasing.js";
 // biome-ignore lint/suspicious/noExplicitAny: workflow I/O is user-defined JSON
 export type WorkflowFn = (ctx: Ctx, input: any) => Promise<unknown>;
 
+export type ForkEdit = { input: unknown } | { result: unknown };
+
 export type RunOutcome =
   | { status: "completed"; result: unknown }
   | { status: "failed"; error: string }
@@ -70,9 +72,16 @@ export class Engine {
    * replayed from history, unfinished work runs live.
    */
   async execute(runId: string, options: ExecuteOptions = {}): Promise<RunOutcome> {
-    const { rows } = await this.pool.query(`SELECT workflow_type, input FROM runs WHERE id = $1`, [
-      runId,
-    ]);
+    const { rows } = await this.pool.query<{
+      workflow_type: string;
+      input: unknown;
+      parent_run_id: string | null;
+      forked_from_seq: number | null;
+      fork_edit: { atSeq: number; stepName: string; input?: unknown } | null;
+    }>(
+      `SELECT workflow_type, input, parent_run_id, forked_from_seq, fork_edit FROM runs WHERE id = $1`,
+      [runId],
+    );
     const run = rows[0];
     if (!run) throw new Error(`Run not found: ${runId}`);
 
@@ -86,7 +95,11 @@ export class Engine {
 
     const history = events.filter((e) => e.type !== "RunStarted");
     const clock = options.clock ?? this.clock;
-    const ctx = new RunContext(this.pool, runId, history, { ...options, clock });
+    const ctx = new RunContext(this.pool, runId, history, {
+      ...options,
+      clock,
+      forkEdit: run.fork_edit,
+    });
 
     try {
       const result = JSON.parse(JSON.stringify((await fn(ctx, run.input)) ?? null));
@@ -142,6 +155,118 @@ export class Engine {
       }
 
       return { status: "failed", error };
+    }
+  }
+
+  /**
+   * Forks a run at sequence `atSeq` with edited input or result.
+   * Copies events 1..atSeq-1, creates the edited event/state at atSeq,
+   * creates a pending task, and leaves everything after atSeq to execute live.
+   */
+  async fork(
+    parentRunId: string,
+    atSeq: number,
+    edit: ForkEdit,
+    _options: ExecuteOptions = {},
+  ): Promise<string> {
+    if (!edit || typeof edit !== "object" || (!("input" in edit) && !("result" in edit))) {
+      throw new Error("Invalid edit: must provide an object with either 'input' or 'result'");
+    }
+
+    const { rows } = await this.pool.query<{
+      id: string;
+      workflow_type: string;
+      status: string;
+      input: unknown;
+    }>(`SELECT id, workflow_type, status, input FROM runs WHERE id = $1`, [parentRunId]);
+    const parentRun = rows[0];
+    if (!parentRun) {
+      throw new Error(`Parent run not found: ${parentRunId}`);
+    }
+
+    const events = await loadEvents(this.pool, parentRunId);
+    const targetEvent = events.find((e) => e.seq === atSeq);
+    if (!targetEvent) {
+      throw new Error(
+        `Invalid atSeq ${atSeq}: no event exists at sequence ${atSeq} in parent run ${parentRunId}`,
+      );
+    }
+    if (targetEvent.type !== "StepCompleted") {
+      throw new Error(
+        `Invalid atSeq ${atSeq}: event at sequence ${atSeq} is of type '${targetEvent.type}', expected 'StepCompleted'`,
+      );
+    }
+
+    const stepPayload = targetEvent.payload as {
+      name: string;
+      inputHash: string;
+      input: unknown;
+      result: unknown;
+    };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Create the new forked run
+      const forkEditData =
+        "input" in edit ? { atSeq, stepName: stepPayload.name, input: edit.input } : null;
+      const { rows: runRows } = await client.query<{ id: string }>(
+        `INSERT INTO runs (workflow_type, input, parent_run_id, forked_from_seq, fork_edit)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        [
+          parentRun.workflow_type,
+          JSON.stringify(parentRun.input ?? null),
+          parentRunId,
+          atSeq,
+          forkEditData ? JSON.stringify(forkEditData) : null,
+        ],
+      );
+      const forkedRunId = runRows[0]!.id;
+
+      // 2. Copy events 1..atSeq-1 using INSERT ... SELECT (events stay append-only)
+      await client.query(
+        `INSERT INTO events (run_id, seq, type, payload)
+         SELECT $1::uuid, seq, type, payload
+         FROM events
+         WHERE run_id = $2::uuid AND seq < $3
+         ORDER BY seq`,
+        [forkedRunId, parentRunId, atSeq],
+      );
+
+      // 3. Write edited event at atSeq if edit is { result }
+      if ("result" in edit) {
+        await client.query(
+          `INSERT INTO events (run_id, seq, type, payload)
+           VALUES ($1::uuid, $2, 'StepCompleted', $3::jsonb)`,
+          [
+            forkedRunId,
+            atSeq,
+            JSON.stringify({
+              name: stepPayload.name,
+              inputHash: stepPayload.inputHash,
+              input: stepPayload.input,
+              result: edit.result,
+            }),
+          ],
+        );
+      }
+
+      // 4. Create the task for the next step the same way startRun creates tasks
+      await client.query(
+        `INSERT INTO tasks (run_id, step_key, status, run_at)
+         VALUES ($1, '__init__', 'pending', $2)`,
+        [forkedRunId, this.clock.now()],
+      );
+
+      await client.query("COMMIT");
+      return forkedRunId;
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
   }
 }

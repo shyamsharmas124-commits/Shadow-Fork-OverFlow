@@ -6,7 +6,13 @@ export {
   type StepContext,
   type StepOptions,
 } from "./context.js";
-export { Engine, type ExecuteOptions, type RunOutcome, type WorkflowFn } from "./engine.js";
+export {
+  Engine,
+  type ExecuteOptions,
+  type ForkEdit,
+  type RunOutcome,
+  type WorkflowFn,
+} from "./engine.js";
 export {
   CrashSignal,
   EventConflictError,
