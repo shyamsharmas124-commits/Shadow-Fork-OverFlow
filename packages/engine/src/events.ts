@@ -28,6 +28,17 @@ export const EventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("TimeRecorded"), payload: z.object({ value: z.number() }) }),
   z.object({ type: z.literal("RandomRecorded"), payload: z.object({ value: z.number() }) }),
+  z.object({
+    type: z.literal("EffectCaptured"),
+    payload: z.object({
+      stepName: z.string(),
+      kind: z.string(),
+      request: z.unknown(),
+      wouldHaveResult: z.unknown(),
+      resultSource: z.enum(["original", "mock"]),
+      attempt: z.number().optional(),
+    }),
+  }),
   z.object({ type: z.literal("RunCompleted"), payload: z.object({ result: z.unknown() }) }),
   z.object({ type: z.literal("RunFailed"), payload: z.object({ error: z.string() }) }),
 ]);

@@ -66,6 +66,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n + 10;
           },
           input.base,
+          { kind: "pure" },
         );
         const r2 = await ctx.step(
           "step2",
@@ -74,6 +75,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n * 2;
           },
           r1,
+          { kind: "pure" },
         );
         const r3 = await ctx.step(
           "step3",
@@ -82,6 +84,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n + 5;
           },
           r2,
+          { kind: "pure" },
         );
         return { final: r3 };
       },
@@ -150,6 +153,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n + 10;
           },
           input.base,
+          { kind: "pure" },
         );
         const r2 = await ctx.step(
           "step2",
@@ -158,6 +162,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n * 2;
           },
           r1,
+          { kind: "pure" },
         );
         const r3 = await ctx.step(
           "step3",
@@ -166,6 +171,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return n + 5;
           },
           r2,
+          { kind: "pure" },
         );
         return { final: r3 };
       },
@@ -217,6 +223,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
               return n * 10;
             },
             item,
+            { kind: "pure" },
           );
           results.push(val);
         }
@@ -226,6 +233,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
             return arr.reduce((a, b) => a + b, 0);
           },
           results,
+          { kind: "pure" },
         );
         return { results, summary };
       },

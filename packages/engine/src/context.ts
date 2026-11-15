@@ -1,6 +1,14 @@
 import type { Pool } from "pg";
 import { type Clock, SystemClock } from "./clock.js";
 import {
+  type HttpConnector,
+  LiveHttpConnector,
+  LiveSqlConnector,
+  ShadowHttpConnector,
+  ShadowSqlConnector,
+  type SqlConnector,
+} from "./connectors.js";
+import {
   CrashSignal,
   FencingError,
   NonDeterminismError,
@@ -13,15 +21,22 @@ import { hashInput } from "./hash.js";
 import { completeTask, failTask, heartbeatTask, scheduleRetry, type TaskRow } from "./leasing.js";
 import { calculateFullJitterBackoff, type RetryOptions } from "./retry.js";
 
+export type StepKind = "pure" | "effectful-reversible" | "effectful-external";
+
 export interface StepContext {
   idempotencyKey: string;
   attempt: number;
   signal: AbortSignal;
   workerId: string;
+  mode: "live" | "shadow";
+  http: HttpConnector;
+  sql: SqlConnector;
 }
 
 export interface StepOptions extends RetryOptions {
   timeoutMs?: number;
+  kind?: StepKind;
+  mock?: unknown;
 }
 
 export interface Ctx {
@@ -51,6 +66,8 @@ export interface RunContextOptions {
   activeTask?: TaskRow;
   clock?: Clock;
   forkEdit?: ForkEditData | null;
+  runMode?: "live" | "shadow";
+  parentEvents?: StoredEvent[];
   onHeartbeatLost?: (taskId: string) => void;
   registerHeartbeat?: (timer: NodeJS.Timeout) => void;
   unregisterHeartbeat?: (timer: NodeJS.Timeout) => void;
@@ -74,6 +91,8 @@ export class RunContext implements Ctx {
   private cursor = 0;
   private readonly clock: Clock;
   private readonly forkEdit?: ForkEditData | null;
+  private readonly runMode: "live" | "shadow";
+  private readonly parentEvents?: StoredEvent[];
   private readonly stepOccurrences = new Map<string, number>();
 
   constructor(
@@ -84,6 +103,8 @@ export class RunContext implements Ctx {
   ) {
     this.clock = options.clock ?? new SystemClock();
     this.forkEdit = options.forkEdit;
+    this.runMode = options.runMode ?? "live";
+    this.parentEvents = options.parentEvents;
   }
 
   /** True while there is recorded history left to replay. */
@@ -121,6 +142,16 @@ export class RunContext implements Ctx {
     while (this.cursor < this.history.length) {
       const recorded = this.history[this.cursor];
       if (!recorded) break;
+
+      // Skip non-step events during replay
+      if (
+        recorded.type === "EffectCaptured" ||
+        recorded.type === "TimeRecorded" ||
+        recorded.type === "RandomRecorded"
+      ) {
+        this.cursor++;
+        continue;
+      }
 
       if (
         (recorded.type === "StepCompleted" || recorded.type === "StepFailed") &&
@@ -264,12 +295,67 @@ export class RunContext implements Ctx {
 
     const abortController = new AbortController();
     let timeoutTimer: NodeJS.Timeout | undefined;
+
+    const stepKind: StepKind = options?.kind ?? "effectful-external";
+    const stepMode: "live" | "shadow" =
+      this.runMode === "shadow" && stepKind !== "pure" ? "shadow" : "live";
+
+    let wouldHaveResult: unknown;
+    let resultSource: "original" | "mock" = "original";
+
+    if (stepMode === "shadow") {
+      const parentStepEvent = this.parentEvents?.filter(
+        (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === name,
+      )[occurrence];
+
+      if (parentStepEvent && parentStepEvent.type === "StepCompleted") {
+        wouldHaveResult = (parentStepEvent.payload as { result: unknown }).result;
+        resultSource = "original";
+      } else if (options?.mock !== undefined) {
+        wouldHaveResult = options.mock;
+        resultSource = "mock";
+      } else {
+        throw new Error(
+          `Shadow mode: no recorded result found in parent run for step '${name}' (occurrence ${occurrence}), and no explicit mock was provided.`,
+        );
+      }
+    }
+
+    const httpConnector =
+      stepMode === "shadow"
+        ? new ShadowHttpConnector(() => wouldHaveResult)
+        : new LiveHttpConnector();
+
+    const sqlConnector =
+      stepMode === "shadow" ? new ShadowSqlConnector(this.pool) : new LiveSqlConnector(this.pool);
+
+    const getCapturedRequest = () => {
+      if (
+        httpConnector instanceof ShadowHttpConnector &&
+        httpConnector.capturedRequests.length > 0
+      ) {
+        return httpConnector.capturedRequests.length === 1
+          ? httpConnector.capturedRequests[0]
+          : httpConnector.capturedRequests;
+      }
+      if (sqlConnector instanceof ShadowSqlConnector && sqlConnector.capturedQueries.length > 0) {
+        return {
+          queries: sqlConnector.capturedQueries,
+          totalAffectedRows: sqlConnector.totalAffectedRows,
+        };
+      }
+      return { kind: stepKind, input: effectiveInput };
+    };
+
     let stepPromise = Promise.resolve().then(() =>
       fn(effectiveInput, {
         idempotencyKey,
         attempt: currentAttempt,
         signal: abortController.signal,
         workerId,
+        mode: stepMode,
+        http: httpConnector,
+        sql: sqlConnector,
       }),
     );
 
@@ -286,7 +372,7 @@ export class RunContext implements Ctx {
 
     try {
       const rawResult = await stepPromise;
-      const result = jsonRoundTrip(rawResult);
+      const finalResult = stepMode === "shadow" ? wouldHaveResult : jsonRoundTrip(rawResult);
 
       if (timeoutTimer) clearTimeout(timeoutTimer);
       clearInterval(heartbeatTimer);
@@ -301,9 +387,22 @@ export class RunContext implements Ctx {
       try {
         await client.query("BEGIN");
         await completeTask(client, taskId, workerId);
+        if (stepMode === "shadow") {
+          await appendEvent(client, this.runId, {
+            type: "EffectCaptured",
+            payload: {
+              stepName: name,
+              kind: stepKind,
+              request: getCapturedRequest(),
+              wouldHaveResult,
+              resultSource,
+              attempt: currentAttempt,
+            },
+          });
+        }
         await appendEvent(client, this.runId, {
           type: "StepCompleted",
-          payload: { name, inputHash, input: effectiveInput, result },
+          payload: { name, inputHash, input: effectiveInput, result: finalResult },
         });
         await client.query("COMMIT");
       } catch (err) {
@@ -313,7 +412,7 @@ export class RunContext implements Ctx {
         client.release();
       }
 
-      return result;
+      return finalResult as O;
     } catch (e) {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       clearInterval(heartbeatTimer);
@@ -343,6 +442,19 @@ export class RunContext implements Ctx {
         try {
           await client.query("BEGIN");
           await scheduleRetry(client, taskId, workerId, runAt);
+          if (stepMode === "shadow") {
+            await appendEvent(client, this.runId, {
+              type: "EffectCaptured",
+              payload: {
+                stepName: name,
+                kind: stepKind,
+                request: getCapturedRequest(),
+                wouldHaveResult,
+                resultSource,
+                attempt: currentAttempt,
+              },
+            });
+          }
           await appendEvent(client, this.runId, {
             type: "StepFailed",
             payload: { name, inputHash, input: effectiveInput, error, attempt: currentAttempt },
@@ -361,6 +473,19 @@ export class RunContext implements Ctx {
         try {
           await client.query("BEGIN");
           await failTask(client, taskId, workerId);
+          if (stepMode === "shadow") {
+            await appendEvent(client, this.runId, {
+              type: "EffectCaptured",
+              payload: {
+                stepName: name,
+                kind: stepKind,
+                request: getCapturedRequest(),
+                wouldHaveResult,
+                resultSource,
+                attempt: currentAttempt,
+              },
+            });
+          }
           await appendEvent(client, this.runId, {
             type: "StepFailed",
             payload: { name, inputHash, input: effectiveInput, error, attempt: currentAttempt },
@@ -374,6 +499,10 @@ export class RunContext implements Ctx {
         }
 
         throw new StepFailedError(name, error);
+      }
+    } finally {
+      if (sqlConnector instanceof ShadowSqlConnector) {
+        await sqlConnector.cleanup();
       }
     }
   }

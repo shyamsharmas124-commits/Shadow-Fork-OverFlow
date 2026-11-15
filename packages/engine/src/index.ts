@@ -1,15 +1,31 @@
 export { type Clock, ManualClock, SystemClock } from "./clock.js";
 export {
+  type CapturedEffect,
+  type HttpConnector,
+  type HttpRequest,
+  type HttpResponse,
+  LiveHttpConnector,
+  LiveSqlConnector,
+  redactHeaders,
+  ShadowHttpConnector,
+  ShadowSqlConnector,
+  type SqlConnector,
+  type SqlResult,
+} from "./connectors.js";
+export {
   type Ctx,
+  type ForkEditData,
   makeIdempotencyKey,
   type RunContextOptions,
   type StepContext,
+  type StepKind,
   type StepOptions,
 } from "./context.js";
 export {
   Engine,
   type ExecuteOptions,
   type ForkEdit,
+  type ForkOptions,
   type RunOutcome,
   type WorkflowFn,
 } from "./engine.js";

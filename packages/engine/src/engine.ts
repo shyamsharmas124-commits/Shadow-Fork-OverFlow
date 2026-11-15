@@ -2,13 +2,17 @@ import type { Pool } from "pg";
 import { type Clock, SystemClock } from "./clock.js";
 import { type Ctx, type ForkEditData, RunContext, type RunContextOptions } from "./context.js";
 import { CrashSignal, FencingError, NonDeterminismError, StepRetryingSignal } from "./errors.js";
-import { appendEvent, loadEvents } from "./events.js";
+import { appendEvent, loadEvents, type StoredEvent } from "./events.js";
 import { reapTasks } from "./leasing.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: workflow I/O is user-defined JSON
 export type WorkflowFn = (ctx: Ctx, input: any) => Promise<unknown>;
 
 export type ForkEdit = { input: unknown } | { result: unknown };
+
+export interface ForkOptions extends ExecuteOptions {
+  mode?: "live" | "shadow";
+}
 
 export type RunOutcome =
   | { status: "completed"; result: unknown }
@@ -78,8 +82,9 @@ export class Engine {
       parent_run_id: string | null;
       forked_from_seq: number | null;
       fork_edit: ForkEditData | null;
+      mode: "live" | "shadow";
     }>(
-      `SELECT workflow_type, input, parent_run_id, forked_from_seq, fork_edit FROM runs WHERE id = $1`,
+      `SELECT workflow_type, input, parent_run_id, forked_from_seq, fork_edit, mode FROM runs WHERE id = $1`,
       [runId],
     );
     const run = rows[0];
@@ -93,12 +98,19 @@ export class Engine {
     const fn = this.workflows[run.workflow_type as string];
     if (!fn) throw new Error(`Unknown workflow: ${run.workflow_type}`);
 
+    let parentEvents: StoredEvent[] | undefined;
+    if (run.parent_run_id) {
+      parentEvents = await loadEvents(this.pool, run.parent_run_id);
+    }
+
     const history = events.filter((e) => e.type !== "RunStarted");
     const clock = options.clock ?? this.clock;
     const ctx = new RunContext(this.pool, runId, history, {
       ...options,
       clock,
       forkEdit: run.fork_edit,
+      runMode: run.mode ?? "live",
+      parentEvents,
     });
 
     try {
@@ -167,7 +179,7 @@ export class Engine {
     parentRunId: string,
     atSeq: number,
     edit: ForkEdit,
-    _options: ExecuteOptions = {},
+    options: ForkOptions = {},
   ): Promise<string> {
     if (!edit || typeof edit !== "object" || (!("input" in edit) && !("result" in edit))) {
       throw new Error("Invalid edit: must provide an object with either 'input' or 'result'");
@@ -213,18 +225,20 @@ export class Engine {
           (e.payload as { name: string }).name === stepPayload.name,
       ).length - 1;
 
+    const forkMode = options.mode ?? "shadow";
+
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
 
-      // 1. Create the new forked run
+      // 1. Create the new forked run (mode is stored on run row: default 'shadow' for forks)
       const forkEditData =
         "input" in edit
           ? { atSeq, stepName: stepPayload.name, occurrenceIndex, input: edit.input }
           : null;
       const { rows: runRows } = await client.query<{ id: string }>(
-        `INSERT INTO runs (workflow_type, input, parent_run_id, forked_from_seq, fork_edit)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO runs (workflow_type, input, parent_run_id, forked_from_seq, fork_edit, mode)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
         [
           parentRun.workflow_type,
@@ -232,6 +246,7 @@ export class Engine {
           parentRunId,
           atSeq,
           forkEditData ? JSON.stringify(forkEditData) : null,
+          forkMode,
         ],
       );
       const forkedRunId = runRows[0]!.id;
