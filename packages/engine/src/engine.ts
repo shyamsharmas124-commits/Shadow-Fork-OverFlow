@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { type Clock, SystemClock } from "./clock.js";
-import { type Ctx, RunContext, type RunContextOptions } from "./context.js";
+import { type Ctx, type ForkEditData, RunContext, type RunContextOptions } from "./context.js";
 import { CrashSignal, FencingError, NonDeterminismError, StepRetryingSignal } from "./errors.js";
 import { appendEvent, loadEvents } from "./events.js";
 import { reapTasks } from "./leasing.js";
@@ -77,7 +77,7 @@ export class Engine {
       input: unknown;
       parent_run_id: string | null;
       forked_from_seq: number | null;
-      fork_edit: { atSeq: number; stepName: string; input?: unknown } | null;
+      fork_edit: ForkEditData | null;
     }>(
       `SELECT workflow_type, input, parent_run_id, forked_from_seq, fork_edit FROM runs WHERE id = $1`,
       [runId],
@@ -204,13 +204,24 @@ export class Engine {
       result: unknown;
     };
 
+    // Determine the occurrence index of this step in the parent run (0-indexed)
+    const occurrenceIndex =
+      events.filter(
+        (e) =>
+          e.seq <= atSeq &&
+          e.type === "StepCompleted" &&
+          (e.payload as { name: string }).name === stepPayload.name,
+      ).length - 1;
+
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
 
       // 1. Create the new forked run
       const forkEditData =
-        "input" in edit ? { atSeq, stepName: stepPayload.name, input: edit.input } : null;
+        "input" in edit
+          ? { atSeq, stepName: stepPayload.name, occurrenceIndex, input: edit.input }
+          : null;
       const { rows: runRows } = await client.query<{ id: string }>(
         `INSERT INTO runs (workflow_type, input, parent_run_id, forked_from_seq, fork_edit)
          VALUES ($1, $2, $3, $4, $5)
@@ -226,9 +237,10 @@ export class Engine {
       const forkedRunId = runRows[0]!.id;
 
       // 2. Copy events 1..atSeq-1 using INSERT ... SELECT (events stay append-only)
+      // created_at is preserved so historical timeline is accurate in the inspector
       await client.query(
-        `INSERT INTO events (run_id, seq, type, payload)
-         SELECT $1::uuid, seq, type, payload
+        `INSERT INTO events (run_id, seq, type, payload, created_at)
+         SELECT $1::uuid, seq, type, payload, created_at
          FROM events
          WHERE run_id = $2::uuid AND seq < $3
          ORDER BY seq`,

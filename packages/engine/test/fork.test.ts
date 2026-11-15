@@ -200,6 +200,102 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
     expect((step1Event!.payload as { input: unknown; result: unknown }).result).toBe(30);
   });
 
+  it("(b) occurrence index: input-edit fork at second occurrence replays first occurrence unchanged and runs second live", async () => {
+    const liveExecutions: Array<{ item: number; occurrence: number }> = [];
+    const wf = `wf_loop_occurrences_${randomUUID().slice(0, 8)}`;
+
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx, input: { items: number[] }) => {
+        const results: number[] = [];
+        let count = 0;
+        for (const item of input.items) {
+          const occ = count++;
+          const val = await ctx.step(
+            "process-item",
+            async (n: number) => {
+              liveExecutions.push({ item: n, occurrence: occ });
+              return n * 10;
+            },
+            item,
+          );
+          results.push(val);
+        }
+        const summary = await ctx.step(
+          "summarize",
+          async (arr: number[]) => {
+            return arr.reduce((a, b) => a + b, 0);
+          },
+          results,
+        );
+        return { results, summary };
+      },
+    });
+
+    // Parent run with [1, 2]
+    // seq 1: RunStarted
+    // seq 2: StepCompleted("process-item", input: 1, result: 10) [occurrence 0]
+    // seq 3: StepCompleted("process-item", input: 2, result: 20) [occurrence 1]
+    // seq 4: StepCompleted("summarize", input: [10, 20], result: 30)
+    // seq 5: RunCompleted(result: { results: [10, 20], summary: 30 })
+    const parentRunId = await engine.startRun(wf, { items: [1, 2] });
+    const parentOutcome = await engine.execute(parentRunId);
+    expect(parentOutcome.status).toBe("completed");
+    expect(liveExecutions).toEqual([
+      { item: 1, occurrence: 0 },
+      { item: 2, occurrence: 1 },
+    ]);
+
+    const parentEvents = await loadEvents(pool, parentRunId);
+    expect(parentEvents.map((e) => e.type)).toEqual([
+      "RunStarted",
+      "StepCompleted",
+      "StepCompleted",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+
+    // Clear live executions tracker before fork execution
+    liveExecutions.length = 0;
+
+    // Fork at second occurrence of "process-item" (seq = 3) with new input 99
+    const forkedRunId = await engine.fork(parentRunId, 3, { input: 99 });
+    const forkOutcome = await engine.execute(forkedRunId);
+    expect(forkOutcome.status).toBe("completed");
+    if (forkOutcome.status === "completed") {
+      expect(forkOutcome.result).toEqual({ results: [10, 990], summary: 1000 });
+    }
+
+    // Assert that the first occurrence (occurrence 0, item 1) replayed from history and was NOT re-executed live!
+    // Only occurrence 1 was executed live with item 99!
+    expect(liveExecutions).toEqual([{ item: 99, occurrence: 1 }]);
+
+    // Verify events in fork:
+    // seq 1: RunStarted
+    // seq 2: StepCompleted("process-item", input: 1, result: 10) [copied from parent]
+    // seq 3: StepCompleted("process-item", input: 99, result: 990) [live executed with new input]
+    // seq 4: StepCompleted("summarize", input: [10, 990], result: 1000)
+    // seq 5: RunCompleted
+    const forkEvents = await loadEvents(pool, forkedRunId);
+    const completedProcessEvents = forkEvents.filter(
+      (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === "process-item",
+    );
+    expect(completedProcessEvents.length).toBe(2);
+
+    // Occurrence 0 has input 1, result 10
+    expect((completedProcessEvents[0]!.payload as { input: number; result: number }).input).toBe(1);
+    expect((completedProcessEvents[0]!.payload as { input: number; result: number }).result).toBe(
+      10,
+    );
+
+    // Occurrence 1 has input 99, result 990
+    expect((completedProcessEvents[1]!.payload as { input: number; result: number }).input).toBe(
+      99,
+    );
+    expect((completedProcessEvents[1]!.payload as { input: number; result: number }).result).toBe(
+      990,
+    );
+  });
+
   it("(d) invalid atSeq, missing run, and fork of a fork lineage", async () => {
     const wf = `wf_lineage_${randomUUID().slice(0, 8)}`;
     const engine = new Engine(pool, {

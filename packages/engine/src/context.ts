@@ -36,13 +36,21 @@ export interface Ctx {
   random(): Promise<number>;
 }
 
+export interface ForkEditData {
+  atSeq: number;
+  stepName: string;
+  occurrenceIndex: number;
+  input?: unknown;
+  result?: unknown;
+}
+
 export interface RunContextOptions {
   workerId?: string;
   leaseDurationMs?: number;
   heartbeatIntervalMs?: number;
   activeTask?: TaskRow;
   clock?: Clock;
-  forkEdit?: { atSeq: number; stepName: string; input?: unknown } | null;
+  forkEdit?: ForkEditData | null;
   onHeartbeatLost?: (taskId: string) => void;
   registerHeartbeat?: (timer: NodeJS.Timeout) => void;
   unregisterHeartbeat?: (timer: NodeJS.Timeout) => void;
@@ -65,7 +73,8 @@ export function makeIdempotencyKey(runId: string, stepKey: string): string {
 export class RunContext implements Ctx {
   private cursor = 0;
   private readonly clock: Clock;
-  private readonly forkEdit?: { atSeq: number; stepName: string; input?: unknown } | null;
+  private readonly forkEdit?: ForkEditData | null;
+  private readonly stepOccurrences = new Map<string, number>();
 
   constructor(
     private readonly pool: Pool,
@@ -92,8 +101,16 @@ export class RunContext implements Ctx {
     input: I,
     options?: StepOptions,
   ): Promise<O> {
+    const occurrence = this.stepOccurrences.get(name) ?? 0;
+    this.stepOccurrences.set(name, occurrence + 1);
+
     let effectiveInput = input;
-    if (this.forkEdit && this.forkEdit.stepName === name && "input" in this.forkEdit) {
+    if (
+      this.forkEdit &&
+      this.forkEdit.stepName === name &&
+      this.forkEdit.occurrenceIndex === occurrence &&
+      "input" in this.forkEdit
+    ) {
       effectiveInput = this.forkEdit.input as I;
     }
     const inputHash = hashInput(effectiveInput);
