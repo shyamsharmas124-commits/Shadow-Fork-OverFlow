@@ -37,6 +37,8 @@ export const EventSchema = z.discriminatedUnion("type", [
       wouldHaveResult: z.unknown(),
       resultSource: z.enum(["original", "mock"]),
       attempt: z.number().optional(),
+      reusedFromParent: z.boolean().optional(),
+      inputChangedFromParent: z.boolean().optional(),
     }),
   }),
   z.object({ type: z.literal("RunCompleted"), payload: z.object({ result: z.unknown() }) }),

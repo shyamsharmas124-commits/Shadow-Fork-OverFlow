@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fc from "fast-check";
 import type pg from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -45,14 +46,15 @@ it("crash anywhere + resume == uninterrupted run", async () => {
           }
           return acc;
         };
-        const engine = new Engine(pool, { sum: wf });
+        const wfName = `wf_prop_sum_${randomUUID().slice(0, 8)}`;
+        const engine = new Engine(pool, { [wfName]: wf });
 
-        const clean = await engine.startRun("sum", { nums });
+        const clean = await engine.startRun(wfName, { nums });
         const expected = await engine.execute(clean);
 
         execs.fill(0);
         armed = true;
-        const crashed = await engine.startRun("sum", { nums });
+        const crashed = await engine.startRun(wfName, { nums });
         await expect(engine.execute(crashed)).rejects.toBeInstanceOf(CrashSignal);
         const resumed = await engine.execute(crashed);
 

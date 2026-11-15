@@ -459,6 +459,8 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     );
     expect(afterReap[0]!.status).toBe("pending");
     expect(afterReap[0]!.lease_owner).toBeNull();
+    await pool.query(`DELETE FROM tasks WHERE id = $1`, [taskId]);
+    await pool.query(`DELETE FROM runs WHERE id = $1`, [runId]);
   });
 
   it("replay-with-retries: replaying from history does not re-execute step and preserves live result and valid event sequence", async () => {

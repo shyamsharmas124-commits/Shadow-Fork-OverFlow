@@ -44,6 +44,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     );
     expect(rows[0]?.status).toBe("running");
     expect(rows[0]?.lease_owner).toBe("worker-a");
+    await pool.query(`DELETE FROM tasks WHERE id = $1`, [claimed1!.id]);
   });
 
   it("heartbeat extends lease_expires_at", async () => {
@@ -66,6 +67,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     );
     const updatedExpiry = new Date(rows[0]!.lease_expires_at).getTime();
     expect(updatedExpiry).toBeGreaterThan(initialExpiry);
+    await pool.query(`DELETE FROM tasks WHERE id = $1`, [claimed!.id]);
   });
 
   it("reaper returns expired running tasks to pending", async () => {
@@ -94,6 +96,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     );
     expect(rows[0]?.status).toBe("pending");
     expect(rows[0]?.lease_owner).toBeNull();
+    await pool.query(`DELETE FROM tasks WHERE id = $1`, [claimed!.id]);
   });
 
   it("fencing prevents a zombie worker from completing a reassigned task", async () => {
@@ -147,6 +150,7 @@ describe("Milestone 2 - Leasing primitives", () => {
 
     // Zombie worker-fail-1 attempts to mark task failed
     await expect(failTask(pool, task!.id, "worker-fail-1")).rejects.toBeInstanceOf(FencingError);
+    await pool.query(`DELETE FROM tasks WHERE id = $1`, [task!.id]);
   });
 });
 

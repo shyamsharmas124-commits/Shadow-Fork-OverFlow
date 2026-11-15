@@ -5,7 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Ctx,
   Engine,
+  type ForkOptions,
   loadEvents,
+  RunContext,
+  ShadowEgressError,
   ShadowSqlConnector,
   type StepContext,
 } from "../src/index.js";
@@ -450,6 +453,7 @@ describe("Milestone 4b - Shadow Mode", () => {
 
     expect(parentRows[0]!.mode).toBe("live");
     expect(forkRows[0]!.mode).toBe("shadow");
+    await engine.execute(forkId);
   });
 
   it("replay of a completed forked run does not call any connector", async () => {
@@ -485,11 +489,21 @@ describe("Milestone 4b - Shadow Mode", () => {
     expect(httpCalls).toBe(1);
     expect(sqlCalls).toBe(1);
 
-    // Replay: execute again on completed forked run
+    // Replay 1: execute again on completed forked run via engine
     const replayOutcome = await engine.execute(forkId);
     expect(replayOutcome.status).toBe("completed");
 
-    // Connector calls remain 1 (never called during replay!)
+    // Replay 2: directly replay history through RunContext and re-execute workflow function
+    const history = (await loadEvents(pool, forkId)).filter(
+      (e) => e.type !== "RunStarted" && e.type !== "RunCompleted",
+    );
+    const replayCtx = new RunContext(pool, forkId, history, { runMode: "shadow" });
+    const wfFn = (
+      engine as unknown as { workflows: Record<string, (c: Ctx, i: unknown) => Promise<unknown>> }
+    ).workflows[wf];
+    await wfFn!(replayCtx, {});
+
+    // Connector calls remain 1 (connectors are NEVER called during replay!)
     expect(httpCalls).toBe(1);
     expect(sqlCalls).toBe(1);
   });
@@ -578,5 +592,360 @@ describe("Milestone 4b - Shadow Mode", () => {
     const parentEventsAfter = await loadEvents(pool, parentId);
     expect(parentTasksAfter).toEqual(parentTasksBefore);
     expect(parentEventsAfter).toEqual(parentEventsBefore);
+  });
+
+  it("parent untouched: parent runs row, all events, and all tasks are byte-identical before and after fork completion", async () => {
+    const wf = `wf_parent_snapshot_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx, input: { n: number }) => {
+        const a = await ctx.step("stepA", async (x: number) => x + 1, input.n, { kind: "pure" });
+        const b = await ctx.step(
+          "stepB",
+          async () => ({ status: "ok", code: 200 }),
+          {},
+          { kind: "effectful-external" },
+        );
+        return { a, b };
+      },
+    });
+
+    const parentId = await engine.startRun(wf, { n: 10 });
+    const parentOutcome = await engine.execute(parentId);
+    expect(parentOutcome.status).toBe("completed");
+
+    // Take complete snapshot of parent in database before fork
+    const { rows: parentRunBefore } = await pool.query(`SELECT * FROM runs WHERE id = $1`, [
+      parentId,
+    ]);
+    const { rows: parentEventsBefore } = await pool.query(
+      `SELECT * FROM events WHERE run_id = $1 ORDER BY seq ASC`,
+      [parentId],
+    );
+    const { rows: parentTasksBefore } = await pool.query(
+      `SELECT * FROM tasks WHERE run_id = $1 ORDER BY id ASC`,
+      [parentId],
+    );
+
+    const snapshotRunBefore = JSON.stringify(parentRunBefore);
+    const snapshotEventsBefore = JSON.stringify(parentEventsBefore);
+    const snapshotTasksBefore = JSON.stringify(parentTasksBefore);
+
+    // Create and execute fork to completion in shadow mode
+    const forkId = await engine.fork(parentId, 2, { input: 99 });
+    const forkOutcome = await engine.execute(forkId);
+    expect(forkOutcome.status).toBe("completed");
+
+    // Take complete snapshot of parent in database after fork
+    const { rows: parentRunAfter } = await pool.query(`SELECT * FROM runs WHERE id = $1`, [
+      parentId,
+    ]);
+    const { rows: parentEventsAfter } = await pool.query(
+      `SELECT * FROM events WHERE run_id = $1 ORDER BY seq ASC`,
+      [parentId],
+    );
+    const { rows: parentTasksAfter } = await pool.query(
+      `SELECT * FROM tasks WHERE run_id = $1 ORDER BY id ASC`,
+      [parentId],
+    );
+
+    const snapshotRunAfter = JSON.stringify(parentRunAfter);
+    const snapshotEventsAfter = JSON.stringify(parentEventsAfter);
+    const snapshotTasksAfter = JSON.stringify(parentTasksAfter);
+
+    // Byte-identical assertion
+    expect(snapshotRunAfter).toBe(snapshotRunBefore);
+    expect(snapshotEventsAfter).toBe(snapshotEventsBefore);
+    expect(snapshotTasksAfter).toBe(snapshotTasksBefore);
+  });
+
+  it("removes mode from public ForkOptions; passing mode is rejected at runtime and typecheck", async () => {
+    const wf = `wf_mode_reject_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx) => ctx.step("s1", () => 1, {}, { kind: "pure" }),
+    });
+
+    const parentId = await engine.startRun(wf, {});
+    await engine.execute(parentId);
+
+    // Compile-time type error:
+    // @ts-expect-error mode is not allowed on ForkOptions
+    const invalidOptions: ForkOptions = { mode: "live" };
+
+    // Runtime rejection:
+    await expect(
+      (
+        engine.fork as unknown as (
+          p: string,
+          seq: number,
+          edit: unknown,
+          opts: unknown,
+        ) => Promise<string>
+      )(parentId, 2, { input: {} }, invalidOptions),
+    ).rejects.toThrow(/Forks are always shadow: specifying mode is not supported\./);
+  });
+
+  it("egress guard: shadow step calling raw fetch throws ShadowEgressError, 0 HTTP requests sent; live run unaffected", async () => {
+    let serverHitCount = 0;
+    const server = http.createServer((_req, res) => {
+      serverHitCount++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as { port: number }).port;
+    const testUrl = `http://localhost:${port}/raw-egress`;
+
+    try {
+      const wf = `wf_egress_guard_${randomUUID().slice(0, 8)}`;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "fetch-step",
+            async () => {
+              // Direct raw fetch call (bypassing ctx.http!)
+              const res = await globalThis.fetch(testUrl);
+              return await res.json();
+            },
+            {},
+            { kind: "effectful-external", mock: { status: "shadow-mocked" } },
+          );
+        },
+      });
+
+      // 1. Live run: direct fetch is allowed and succeeds
+      const liveId = await engine.startRun(wf, {});
+      const liveOutcome = await engine.execute(liveId);
+      expect(liveOutcome.status).toBe("completed");
+      expect(serverHitCount).toBe(1);
+
+      // 2. Fork in shadow mode: direct fetch is blocked by AsyncLocalStorage egress guard!
+      const forkId = await engine.fork(liveId, 2, { input: {} });
+      const forkOutcome = await engine.execute(forkId);
+      expect(forkOutcome.status).toBe("failed");
+      if (forkOutcome.status === "failed") {
+        expect(forkOutcome.error).toContain("Shadow egress violation");
+      }
+      // Server received ZERO additional requests from the shadow step!
+      expect(serverHitCount).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("redaction: redacts secret values in URL query parameters and JSON or form-encoded bodies", async () => {
+    const wf = `wf_redact_ext_${randomUUID().slice(0, 8)}`;
+
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx) => {
+        return await ctx.step(
+          "redacted-step",
+          async (_inp, sctx: StepContext) => {
+            if (sctx.mode === "shadow") {
+              // Call shadow http with sensitive URL query params and nested body
+              await sctx.http.fetch({
+                url: "http://example.com/checkout?user_token=tok_secret_123&api_key=my_key_999&signature=sig_abc&password=p_secret&auth=secret_auth_param_val_99&regular=visible",
+                method: "POST",
+                headers: {
+                  Authorization: "Bearer sensitive_bearer",
+                  Cookie: "sid=secret_cookie_val",
+                  "X-App-Token": "app_token_secret",
+                  "Content-Type": "application/json",
+                },
+                body: {
+                  user: "alice",
+                  api_secret: "super_secret_password",
+                  auth_token: "tok_in_body_secret",
+                  nested: {
+                    signature_key: "nested_key_secret",
+                  },
+                },
+              });
+            }
+            return { processed: true };
+          },
+          {},
+          { kind: "effectful-external", mock: { processed: true } },
+        );
+      },
+    });
+
+    const parentId = await engine.startRun(wf, {});
+    await engine.execute(parentId);
+
+    const forkId = await engine.fork(parentId, 2, { input: {} });
+    const forkOutcome = await engine.execute(forkId);
+    expect(forkOutcome.status).toBe("completed");
+
+    const events = await loadEvents(pool, forkId);
+    const effectEvent = events.find((e) => e.type === "EffectCaptured");
+    expect(effectEvent).toBeDefined();
+
+    const payload = effectEvent!.payload as {
+      request: {
+        url: string;
+        headers: Record<string, string>;
+        body: Record<string, unknown>;
+      };
+    };
+
+    // Assert URL query params redacted
+    expect(payload.request.url).toContain("user_token=[REDACTED]");
+    expect(payload.request.url).toContain("api_key=[REDACTED]");
+    expect(payload.request.url).toContain("signature=[REDACTED]");
+    expect(payload.request.url).toContain("password=[REDACTED]");
+    expect(payload.request.url).toContain("auth=[REDACTED]");
+    expect(payload.request.url).toContain("regular=visible");
+
+    // Assert body fields redacted
+    expect(payload.request.body.user).toBe("alice");
+    expect(payload.request.body.api_secret).toBe("[REDACTED]");
+    expect(payload.request.body.auth_token).toBe("[REDACTED]");
+    expect((payload.request.body.nested as Record<string, unknown>).signature_key).toBe(
+      "[REDACTED]",
+    );
+
+    // Assert original secret values are nowhere in the event log
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("tok_secret_123");
+    expect(serialized).not.toContain("my_key_999");
+    expect(serialized).not.toContain("sig_abc");
+    expect(serialized).not.toContain("p_secret");
+    expect(serialized).not.toContain("secret_auth_param_val_99");
+    expect(serialized).not.toContain("super_secret_password");
+    expect(serialized).not.toContain("tok_in_body_secret");
+    expect(serialized).not.toContain("nested_key_secret");
+    expect(serialized).not.toContain("sensitive_bearer");
+    expect(serialized).not.toContain("secret_cookie_val");
+  });
+
+  it("shadow SQL safety: lock_timeout fails fast when row lock is held, and non-transactional statements are rejected", async () => {
+    const accountId = randomUUID();
+    await pool.query(
+      `INSERT INTO shadow_accounts (id, name, balance) VALUES ($1, 'LockTest', 500) ON CONFLICT DO NOTHING`,
+      [accountId],
+    );
+
+    const wf = `wf_lock_timeout_${randomUUID().slice(0, 8)}`;
+    let isForkRun = false;
+    let testNonTransactional = false;
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx) => {
+        await ctx.step("init", () => "ready", {}, { kind: "pure" });
+        return await ctx.step(
+          "sql-step",
+          async (_inp, sctx: StepContext) => {
+            if (!isForkRun) {
+              await sctx.sql.query("SELECT 1");
+            } else if (testNonTransactional) {
+              await sctx.sql.query("VACUUM shadow_accounts");
+            } else {
+              await sctx.sql.query(`UPDATE shadow_accounts SET balance = 999 WHERE id = $1`, [
+                accountId,
+              ]);
+            }
+            return { ok: true };
+          },
+          {},
+          { kind: "effectful-reversible", maxAttempts: 1, mock: { ok: true } },
+        );
+      },
+    });
+
+    // Parent run executes cleanly without changing balance
+    const parentId = await engine.startRun(wf, {});
+    const parentOutcome = await engine.execute(parentId);
+    expect(parentOutcome.status).toBe("completed");
+
+    // 1. Test lock_timeout failure:
+    // Client A acquires exclusive lock on the row and holds it
+    const clientA = await pool.connect();
+    await clientA.query("BEGIN");
+    await clientA.query(`SELECT * FROM shadow_accounts WHERE id = $1 FOR UPDATE`, [accountId]);
+
+    try {
+      // Fork in shadow mode attempts to UPDATE the locked row
+      isForkRun = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      const forkOutcome = await engine.execute(forkId);
+      expect(forkOutcome.status).toBe("failed");
+      if (forkOutcome.status === "failed") {
+        expect(forkOutcome.error).toMatch(/lock timeout/i);
+      }
+    } finally {
+      await clientA.query("ROLLBACK");
+      clientA.release();
+    }
+
+    // Balance in database remains 500 (unmodified)
+    const { rows } = await pool.query<{ balance: number }>(
+      `SELECT balance FROM shadow_accounts WHERE id = $1`,
+      [accountId],
+    );
+    expect(rows[0]!.balance).toBe(500);
+
+    // 2. Test non-transactional statement rejection:
+    testNonTransactional = true;
+    const forkId2 = await engine.fork(parentId, 2, { input: {} });
+    const forkOutcome2 = await engine.execute(forkId2);
+    expect(forkOutcome2.status).toBe("failed");
+    if (forkOutcome2.status === "failed") {
+      expect(forkOutcome2.error).toMatch(/cannot run inside a transaction/i);
+    }
+  });
+
+  it("reused-result staleness: records reusedFromParent: true and inputChangedFromParent on EffectCaptured", async () => {
+    const wf = `wf_staleness_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wf]: async (ctx: Ctx, input: { s1Val: number; s2Val: number }) => {
+        const r1 = await ctx.step(
+          "step-external-1",
+          async (inp: { val: number }) => ({ calculated: inp.val * 2 }),
+          { val: input.s1Val },
+          { kind: "effectful-external" },
+        );
+        const r2 = await ctx.step(
+          "step-external-2",
+          async (inp: { val: number }) => ({ calculated: inp.val + 100 }),
+          { val: input.s2Val },
+          { kind: "effectful-external" },
+        );
+        return { r1, r2 };
+      },
+    });
+
+    const parentId = await engine.startRun(wf, { s1Val: 10, s2Val: 20 });
+    const parentOutcome = await engine.execute(parentId);
+    expect(parentOutcome.status).toBe("completed");
+
+    // Fork at step 1 (seq 2) with EDITED input { val: 999 }
+    const forkId = await engine.fork(parentId, 2, { input: { val: 999 } });
+    const forkOutcome = await engine.execute(forkId);
+    expect(forkOutcome.status).toBe("completed");
+
+    const forkEvents = await loadEvents(pool, forkId);
+    const effectEvents = forkEvents.filter((e) => e.type === "EffectCaptured");
+    expect(effectEvents.length).toBe(2);
+
+    const effect1 = effectEvents[0]!.payload as {
+      stepName: string;
+      reusedFromParent?: boolean;
+      inputChangedFromParent?: boolean;
+    };
+    const effect2 = effectEvents[1]!.payload as {
+      stepName: string;
+      reusedFromParent?: boolean;
+      inputChangedFromParent?: boolean;
+    };
+
+    // Step 1: input was edited in fork from { val: 10 } to { val: 999 }
+    expect(effect1.stepName).toBe("step-external-1");
+    expect(effect1.reusedFromParent).toBe(true);
+    expect(effect1.inputChangedFromParent).toBe(true); // input changed!
+
+    // Step 2: input was NOT changed ({ val: 20 } unchanged)
+    expect(effect2.stepName).toBe("step-external-2");
+    expect(effect2.reusedFromParent).toBe(true);
+    expect(effect2.inputChangedFromParent).toBe(false); // input identical to parent!
   });
 });

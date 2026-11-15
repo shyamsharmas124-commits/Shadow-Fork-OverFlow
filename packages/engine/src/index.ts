@@ -4,9 +4,12 @@ export {
   type HttpConnector,
   type HttpRequest,
   type HttpResponse,
+  isSecretFieldName,
   LiveHttpConnector,
   LiveSqlConnector,
   redactHeaders,
+  redactPayload,
+  redactUrl,
   ShadowHttpConnector,
   ShadowSqlConnector,
   type SqlConnector,
@@ -16,6 +19,7 @@ export {
   type Ctx,
   type ForkEditData,
   makeIdempotencyKey,
+  RunContext,
   type RunContextOptions,
   type StepContext,
   type StepKind,
@@ -45,6 +49,11 @@ export {
   loadEvents,
   type StoredEvent,
 } from "./events.js";
+export {
+  installEgressGuard,
+  runInShadowContext,
+  ShadowEgressError,
+} from "./guard.js";
 export { hashInput, stableStringify } from "./hash.js";
 export {
   claimTask,

@@ -17,6 +17,7 @@ import {
   StepTimeoutError,
 } from "./errors.js";
 import { appendEvent, type StoredEvent } from "./events.js";
+import { runInShadowContext } from "./guard.js";
 import { hashInput } from "./hash.js";
 import { completeTask, failTask, heartbeatTask, scheduleRetry, type TaskRow } from "./leasing.js";
 import { calculateFullJitterBackoff, type RetryOptions } from "./retry.js";
@@ -302,6 +303,8 @@ export class RunContext implements Ctx {
 
     let wouldHaveResult: unknown;
     let resultSource: "original" | "mock" = "original";
+    let reusedFromParent: boolean | undefined;
+    let inputChangedFromParent: boolean | undefined;
 
     if (stepMode === "shadow") {
       const parentStepEvent = this.parentEvents?.filter(
@@ -311,9 +314,14 @@ export class RunContext implements Ctx {
       if (parentStepEvent && parentStepEvent.type === "StepCompleted") {
         wouldHaveResult = (parentStepEvent.payload as { result: unknown }).result;
         resultSource = "original";
+        reusedFromParent = true;
+        const parentInputHash = (parentStepEvent.payload as { inputHash?: string }).inputHash;
+        inputChangedFromParent = parentInputHash !== inputHash;
       } else if (options?.mock !== undefined) {
         wouldHaveResult = options.mock;
         resultSource = "mock";
+        reusedFromParent = false;
+        inputChangedFromParent = false;
       } else {
         throw new Error(
           `Shadow mode: no recorded result found in parent run for step '${name}' (occurrence ${occurrence}), and no explicit mock was provided.`,
@@ -347,7 +355,7 @@ export class RunContext implements Ctx {
       return { kind: stepKind, input: effectiveInput };
     };
 
-    let stepPromise = Promise.resolve().then(() =>
+    const invokeStepFn = () =>
       fn(effectiveInput, {
         idempotencyKey,
         attempt: currentAttempt,
@@ -356,7 +364,10 @@ export class RunContext implements Ctx {
         mode: stepMode,
         http: httpConnector,
         sql: sqlConnector,
-      }),
+      });
+
+    let stepPromise = Promise.resolve().then(() =>
+      stepMode === "shadow" ? runInShadowContext(invokeStepFn) : invokeStepFn(),
     );
 
     if (options?.timeoutMs && options.timeoutMs > 0) {
@@ -397,6 +408,8 @@ export class RunContext implements Ctx {
               wouldHaveResult,
               resultSource,
               attempt: currentAttempt,
+              reusedFromParent,
+              inputChangedFromParent,
             },
           });
         }
@@ -452,6 +465,8 @@ export class RunContext implements Ctx {
                 wouldHaveResult,
                 resultSource,
                 attempt: currentAttempt,
+                reusedFromParent,
+                inputChangedFromParent,
               },
             });
           }
@@ -483,6 +498,8 @@ export class RunContext implements Ctx {
                 wouldHaveResult,
                 resultSource,
                 attempt: currentAttempt,
+                reusedFromParent,
+                inputChangedFromParent,
               },
             });
           }

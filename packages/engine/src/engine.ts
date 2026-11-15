@@ -11,7 +11,7 @@ export type WorkflowFn = (ctx: Ctx, input: any) => Promise<unknown>;
 export type ForkEdit = { input: unknown } | { result: unknown };
 
 export interface ForkOptions extends ExecuteOptions {
-  mode?: "live" | "shadow";
+  mode?: never;
 }
 
 export type RunOutcome =
@@ -184,6 +184,9 @@ export class Engine {
     if (!edit || typeof edit !== "object" || (!("input" in edit) && !("result" in edit))) {
       throw new Error("Invalid edit: must provide an object with either 'input' or 'result'");
     }
+    if ((options as Record<string, unknown>).mode !== undefined) {
+      throw new Error("Forks are always shadow: specifying mode is not supported.");
+    }
 
     const { rows } = await this.pool.query<{
       id: string;
@@ -225,7 +228,7 @@ export class Engine {
           (e.payload as { name: string }).name === stepPayload.name,
       ).length - 1;
 
-    const forkMode = options.mode ?? "shadow";
+    const forkMode = "shadow";
 
     const client = await this.pool.connect();
     try {

@@ -33,27 +33,114 @@ export interface CapturedEffect {
 }
 
 /**
- * Redacts sensitive headers before storing in event logs:
- * Authorization, Cookie, Proxy-Authorization, and any header containing "token", "secret", or "key" (case-insensitive).
+ * Checks if a header, query param, or payload field name is sensitive and must be redacted.
+ */
+export function isSecretFieldName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower === "authorization" ||
+    lower === "cookie" ||
+    lower === "proxy-authorization" ||
+    lower.includes("token") ||
+    lower.includes("secret") ||
+    lower.includes("key") ||
+    lower.includes("signature") ||
+    lower.includes("password") ||
+    lower.includes("auth")
+  );
+}
+
+/**
+ * Redacts sensitive headers before storing in event logs.
  */
 export function redactHeaders(headers: Record<string, string> = {}): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    const lower = key.toLowerCase();
-    if (
-      lower === "authorization" ||
-      lower === "cookie" ||
-      lower === "proxy-authorization" ||
-      lower.includes("token") ||
-      lower.includes("secret") ||
-      lower.includes("key")
-    ) {
+    if (isSecretFieldName(key)) {
       redacted[key] = "[REDACTED]";
     } else {
       redacted[key] = value;
     }
   }
   return redacted;
+}
+
+/**
+ * Redacts sensitive query parameters from URLs.
+ */
+export function redactUrl(urlStr: string): string {
+  try {
+    const isRelative = !urlStr.startsWith("http://") && !urlStr.startsWith("https://");
+    const parsed = new URL(urlStr, "http://localhost");
+    let changed = false;
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (isSecretFieldName(key)) {
+        parsed.searchParams.set(key, "[REDACTED]");
+        changed = true;
+      }
+    }
+    if (!changed) return urlStr;
+    const formatted = parsed.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+    if (isRelative) {
+      return formatted.replace("http://localhost", "");
+    }
+    return formatted;
+  } catch {
+    return urlStr;
+  }
+}
+
+/**
+ * Redacts sensitive fields in JSON objects, arrays, JSON strings, and form-encoded bodies.
+ */
+export function redactPayload(body: unknown): unknown {
+  if (body === null || body === undefined) return body;
+
+  if (typeof body === "string") {
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed === "object" && parsed !== null) {
+        return JSON.stringify(redactPayload(parsed));
+      }
+    } catch {
+      if (body.includes("=") && !body.includes("\n")) {
+        try {
+          const params = new URLSearchParams(body);
+          let changed = false;
+          for (const key of Array.from(params.keys())) {
+            if (isSecretFieldName(key)) {
+              params.set(key, "[REDACTED]");
+              changed = true;
+            }
+          }
+          if (changed) {
+            return params.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+          }
+        } catch {
+          // Keep as string
+        }
+      }
+    }
+    return body;
+  }
+
+  if (Array.isArray(body)) {
+    return body.map((item) => redactPayload(item));
+  }
+
+  if (typeof body === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (isSecretFieldName(key)) {
+        result[key] = "[REDACTED]";
+      } else {
+        result[key] = redactPayload(value);
+      }
+    }
+    return result;
+  }
+
+  return body;
 }
 
 export class LiveHttpConnector implements HttpConnector {
@@ -110,10 +197,10 @@ export class ShadowHttpConnector implements HttpConnector {
     this.callCount++;
     const method = req.method ?? "GET";
     const redactedReq = {
-      url: req.url,
+      url: redactUrl(req.url),
       method,
       headers: redactHeaders(req.headers),
-      body: req.body,
+      body: redactPayload(req.body),
     };
     this.capturedRequests.push(redactedReq);
 
@@ -142,6 +229,9 @@ export class LiveSqlConnector implements SqlConnector {
   }
 }
 
+const NON_TRANSACTIONAL_SQL_REGEX =
+  /^\s*(VACUUM|CREATE\s+INDEX\s+CONCURRENTLY|DROP\s+INDEX\s+CONCURRENTLY|REINDEX\s+CONCURRENTLY|DISCARD\s+ALL)/i;
+
 export class ShadowSqlConnector implements SqlConnector {
   public callCount = 0;
   public totalAffectedRows = 0;
@@ -156,6 +246,9 @@ export class ShadowSqlConnector implements SqlConnector {
       this.client = await this.pool.connect();
       this.backendPid = (this.client as unknown as { processID: number }).processID;
       await this.client.query("BEGIN");
+      await this.client.query(
+        "SET LOCAL lock_timeout = '1000ms'; SET LOCAL statement_timeout = '5000ms';",
+      );
     }
     return this.client;
   }
@@ -165,6 +258,11 @@ export class ShadowSqlConnector implements SqlConnector {
    */
   async query(sql: string, params?: unknown[]): Promise<SqlResult> {
     this.callCount++;
+    if (NON_TRANSACTIONAL_SQL_REGEX.test(sql.trim())) {
+      throw new Error(
+        `Shadow SQL error: statement '${sql.trim().slice(0, 30)}...' cannot run inside a transaction and cannot be rolled back.`,
+      );
+    }
     const client = await this.getClient();
     const res = await client.query(sql, params);
     const rowCount = res.rowCount ?? 0;

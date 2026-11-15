@@ -446,6 +446,7 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
     );
     expect(forkedRow[0]!.parent_run_id).toBe(failedRunId);
     expect(forkedRow[0]!.status).toBe("running");
+    await pool.query(`DELETE FROM tasks WHERE run_id IN ($1, $2)`, [forkedFromFailed, forkedRunId]);
   });
 
   it("idempotency keys are unique per run and differ between parent and fork", async () => {

@@ -30,3 +30,10 @@ Tests use `DATABASE_URL`. To use Testcontainers instead, replace `makePool()` in
 - Replay checks step name **and** input hash against history; any mismatch raises
   `NonDeterminismError` with the event position.
 - `CrashSignal` stands in for a process kill in tests: nothing is recorded, the run stays resumable.
+
+### Shadow Execution & Safety Notes
+- **Shadow SQL Transactions & Sequences**: Reversible SQL steps in shadow mode execute inside dedicated transactions that are guaranteed to `ROLLBACK` in a `finally` block on completion, error, timeout, or abort. Note that Postgres sequence generators (such as `SERIAL`, `BIGSERIAL`, or `nextval(...)`) are inherently non-transactional by Postgres engine design: sequence values consumed during a shadow step are **not** rolled back when the transaction aborts.
+- **Egress Guard Boundaries**: Shadow mode step execution activates an `AsyncLocalStorage`-backed egress guard that intercepts `globalThis.fetch`, `node:http.request`, `node:http.get`, `node:https.request`, and `node:https.get`, throwing `ShadowEgressError` on any unauthorized outbound network request. Plainly, this guard does **NOT** cover:
+  1. Direct socket connections via raw `node:net` or `node:dgram` sockets.
+  2. Out-of-band third-party database clients or connection pools initialized outside the workflow engine context.
+  3. Native compiled C/C++ addons or child processes spawned via `node:child_process` that perform independent networking.
