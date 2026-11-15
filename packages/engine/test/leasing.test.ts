@@ -5,6 +5,7 @@ import {
   completeTask,
   Engine,
   FencingError,
+  failTask,
   heartbeatTask,
   loadEvents,
   reapTasks,
@@ -122,6 +123,24 @@ describe("Milestone 2 - Leasing primitives", () => {
       [task!.id],
     );
     expect(rows[0]?.status).toBe("completed");
+  });
+
+  it("failTask respects fencing and rejects zombie worker", async () => {
+    const engine = new Engine(pool, { dummy: async () => 1 });
+    const _runId = await engine.startRun("dummy", {});
+
+    const task = await claimTask(pool, "worker-fail-1", 50);
+    expect(task).not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 80));
+    await reapTasks(pool);
+
+    const task2 = await claimTask(pool, "worker-fail-2", 2000);
+    expect(task2).not.toBeNull();
+    expect(task2?.lease_owner).toBe("worker-fail-2");
+
+    // Zombie worker-fail-1 attempts to mark task failed
+    await expect(failTask(pool, task!.id, "worker-fail-1")).rejects.toBeInstanceOf(FencingError);
   });
 });
 
