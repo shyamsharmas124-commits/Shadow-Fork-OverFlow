@@ -9,10 +9,23 @@ export async function migrate(pool: Pool): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("SELECT pg_advisory_lock(987654321)");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        name text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
     for (const f of readdirSync(dir)
       .filter((f) => f.endsWith(".sql"))
       .sort()) {
-      await client.query(readFileSync(join(dir, f), "utf8"));
+      const { rows } = await client.query<{ name: string }>(
+        `SELECT name FROM _migrations WHERE name = $1`,
+        [f],
+      );
+      if (rows.length === 0) {
+        await client.query(readFileSync(join(dir, f), "utf8"));
+        await client.query(`INSERT INTO _migrations (name) VALUES ($1)`, [f]);
+      }
     }
   } finally {
     try {

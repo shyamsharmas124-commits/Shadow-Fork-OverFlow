@@ -33,3 +33,15 @@ export class EventConflictError extends Error {
     this.name = "EventConflictError";
   }
 }
+
+export class FencingError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly workerId: string,
+  ) {
+    super(
+      `Fencing check failed for task ${taskId}: worker ${workerId} is not the current lease owner`,
+    );
+    this.name = "FencingError";
+  }
+}

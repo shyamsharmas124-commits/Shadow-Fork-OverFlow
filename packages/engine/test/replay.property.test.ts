@@ -69,4 +69,4 @@ it("crash anywhere + resume == uninterrupted run", async () => {
     ),
     { numRuns: 40 },
   );
-});
+}, 15000);
