@@ -3,6 +3,12 @@ import { installEgressGuard } from "./guard.js";
 // Eagerly install egress guard at engine import time before user workflow modules load
 installEgressGuard();
 
+export {
+  buildEffectDiff,
+  type CreateApiOptions,
+  createApiApp,
+  type EffectDiffItem,
+} from "./api.js";
 export { type Clock, ManualClock, SystemClock } from "./clock.js";
 export {
   type CapturedEffect,
@@ -74,5 +80,6 @@ export {
   type TaskRow,
 } from "./leasing.js";
 export { migrate } from "./migrate.js";
+export { redactApiOutput, redactApiString } from "./redact.js";
 export { calculateFullJitterBackoff, type RetryOptions } from "./retry.js";
 export { Worker, type WorkerOptions } from "./worker.js";

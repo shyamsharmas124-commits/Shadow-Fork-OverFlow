@@ -45,7 +45,7 @@ export type RunOutcome =
   | { status: "failed"; error: string }
   | { status: "running"; retrying?: { step: string; attempt: number; runAt: Date } };
 
-export type ExecuteOptions = RunContextOptions & { clock?: Clock };
+export type ExecuteOptions = RunContextOptions & { clock?: Clock; resumeFailed?: boolean };
 
 export class Engine {
   constructor(
@@ -104,13 +104,14 @@ export class Engine {
   async execute(runId: string, options: ExecuteOptions = {}): Promise<RunOutcome> {
     const { rows } = await this.pool.query<{
       workflow_type: string;
+      status: string;
       input: unknown;
       parent_run_id: string | null;
       forked_from_seq: number | null;
       fork_edit: ForkEditData | null;
       mode: "live" | "shadow";
     }>(
-      `SELECT workflow_type, input, parent_run_id, forked_from_seq, fork_edit, mode FROM runs WHERE id = $1`,
+      `SELECT workflow_type, status, input, parent_run_id, forked_from_seq, fork_edit, mode FROM runs WHERE id = $1`,
       [runId],
     );
     const run = rows[0];
@@ -119,7 +120,16 @@ export class Engine {
     const events = await loadEvents(this.pool, runId);
     const last = events[events.length - 1];
     if (last?.type === "RunCompleted") return { status: "completed", result: last.payload.result };
-    if (last?.type === "RunFailed") return { status: "failed", error: last.payload.error };
+    if (last?.type === "RunFailed" && !options.resumeFailed)
+      return { status: "failed", error: last.payload.error };
+
+    if (options.resumeFailed && run.status === "failed") {
+      await this.pool.query(`UPDATE runs SET status = 'running' WHERE id = $1`, [runId]);
+      await this.pool.query(
+        `UPDATE tasks SET status = 'pending', run_at = $2, lease_owner = NULL, lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
+        [runId, (options.clock ?? this.clock).now()],
+      );
+    }
 
     const fn = this.workflows[run.workflow_type as string];
     if (!fn) throw new Error(`Unknown workflow: ${run.workflow_type}`);
@@ -129,7 +139,9 @@ export class Engine {
       parentEvents = await loadEvents(this.pool, run.parent_run_id);
     }
 
-    const history = events.filter((e) => e.type !== "RunStarted");
+    const history = events.filter(
+      (e) => e.type !== "RunStarted" && (!options.resumeFailed || e.type !== "RunFailed"),
+    );
     const clock = options.clock ?? this.clock;
     const ctx = new RunContext(this.pool, runId, history, {
       ...options,

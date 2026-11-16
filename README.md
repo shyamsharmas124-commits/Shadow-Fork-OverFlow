@@ -9,8 +9,9 @@ of executed, then diff against the original.
       `NonDeterminismError`, crash-and-resume tests, fast-check property test
 - [x] Milestone 2: leasing (claim, heartbeat, reaper, fencing)
 - [x] Milestone 3: retries, timeouts, idempotency keys
-- [ ] Milestone 4: fork API, connectors with live/shadow modes
-- [ ] Milestone 5: inspector UI
+- [x] Milestone 4: fork API, connectors with live/shadow modes, AST-based SQL parser, egress guards
+- [x] Milestone 5a: HTTP API (Hono) with read-time redaction, side-by-side effect diffing, and run resumption
+- [ ] Milestone 5b: inspector UI dashboard
 - [ ] Milestone 6: demo workflow, chaos script, README diagrams
 
 ## Run
@@ -59,3 +60,19 @@ All external effect requests captured by shadow connectors are redacted at **wri
 | **`EffectCaptured.wouldHaveResult`** | `{ "apiKey": "sk-..." }` | Reused or mocked return payload for the effect. Redacted in API inspector serializer. | **Read-time** (API layer) |
 | **`runs.input`** | `{ "webhookSecret": "..." }` | Workflow initial payload stored in `runs` row. Redacted in API inspector serializer. | **Read-time** (API layer) |
 | **`runs.fork_edit`** | `{ input: { "token": "..." }, mocks: [...] }` | Fork input override and mocks stored in `runs` row. Redacted in API inspector serializer. | **Read-time** (API layer) |
+
+### Milestone 5a HTTP API & Inspector Endpoints
+
+Built on **Hono**:
+- **Web Standards Native**: Built on standard `Request` and `Response` objects supported natively by Node.js 24 (`globalThis.Request`, `globalThis.Response`).
+- **Zero External Dependencies**: Core routing engine has 0 sub-dependencies, ensuring sub-millisecond route dispatch and a lean package footprint.
+- **Flawless In-Memory Testing**: `app.request(path, options)` enables complete unit and integration testing without opening TCP sockets or managing port collisions in Vitest.
+- **Node.js HTTP Server Compatibility**: `@hono/node-server` provides a lightweight bridge to Node's `http` module for standalone server execution.
+
+#### Endpoints
+1. `GET /runs`: Lists runs with status, timing (`createdAt`, `startedAt`, `completedAt`, `durationMs`), and mode (`live` vs `shadow`). Supports `status`, `mode`, and `limit` query filters.
+2. `GET /runs/:id`: Returns run metadata, complete event log ordered by sequence number (`seq ASC`), timing, and active task state from the `tasks` table.
+3. `GET /runs/:id/effects`: Side-by-side diff view of parent vs shadow effects, highlighting `reusedFromParent`, `inputChangedFromParent`, original results vs shadow `wouldHaveResult`, and connector effects.
+4. `POST /runs/:id/fork`: Creates a shadow fork from run `:id` at sequence `atSeq` with optional input/result edit and mocks. Returns `{ runId, warnings }`.
+5. `POST /runs/:id/resume`: Resumes stalled runs (e.g. following worker crash or lease expiry) or failed runs (re-enqueuing failed tasks for retry without violating append-only history).
+
