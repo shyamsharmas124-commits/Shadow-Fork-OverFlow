@@ -1,9 +1,12 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { DiffView } from "../src/components/DiffView.js";
 import type { EffectDiffResponse } from "../src/types.js";
 
 describe("Milestone 5c - DiffView Unit Tests", () => {
+  afterEach(() => {
+    cleanup();
+  });
   it("aligns repeated step names by occurrence correctly without collision", () => {
     const diffData: EffectDiffResponse = {
       runId: "fork-run-123",
@@ -182,5 +185,161 @@ describe("Milestone 5c - DiffView Unit Tests", () => {
     // Assert literal text is rendered harmlessly
     expect(container.textContent).toContain("<script>alert('xss')</script>");
     expect(container.textContent).toContain("window.__pwned=1");
+  });
+
+  it("labels step as 'Failed in parent' and displays redacted parent error when step failed in parent", () => {
+    const diffData: EffectDiffResponse = {
+      runId: "fork-failed-parent",
+      isFork: true,
+      parentRunId: "parent-failed-run",
+      forkedFromSeq: 2,
+      mode: "shadow",
+      steps: [
+        {
+          stepName: "charge-card",
+          occurrence: 0,
+          reusedFromParent: false,
+          inputChangedFromParent: false,
+          status: "failed-in-parent",
+          parent: {
+            seq: 2,
+            input: { amount: 5000, card: "tok_visa" },
+            error: "PaymentGatewayError: Card declined [REDACTED]",
+            failed: true,
+            effects: [],
+          },
+          shadow: {
+            seq: 3,
+            input: { amount: 5000, card: "tok_visa" },
+            result: { status: "approved", txnId: "mock_tx_999" },
+            effects: [
+              {
+                kind: "payment_capture",
+                request: { amount: 5000 },
+                wouldHaveResult: { status: "approved" },
+                resultSource: "mock",
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const { container } = render(<DiffView diff={diffData} />);
+
+    // Assert it is labeled "Failed in Parent", NOT "Added in Fork"
+    expect(container.textContent).toContain("Failed in Parent");
+    expect(container.textContent).not.toContain("Added in Fork");
+
+    // Assert parent error card is displayed with the error
+    const parentError = screen.getByTestId("diff-parent-error");
+    expect(parentError).toBeDefined();
+    expect(parentError.textContent).toContain("PaymentGatewayError: Card declined [REDACTED]");
+
+    // Assert shadow mock result is rendered
+    expect(container.textContent).toContain('"txnId": "mock_tx_999"');
+    expect(container.textContent).toContain("mock");
+  });
+
+  it("renders parent steps after fork point as 'Only in Parent'", () => {
+    const diffData: EffectDiffResponse = {
+      runId: "fork-only-parent",
+      isFork: true,
+      parentRunId: "parent-early-stop",
+      forkedFromSeq: 2,
+      mode: "shadow",
+      steps: [
+        {
+          stepName: "step-1",
+          occurrence: 0,
+          reusedFromParent: true,
+          inputChangedFromParent: false,
+          status: "reused",
+          parent: { seq: 2, input: { a: 1 }, result: { done: true }, effects: [] },
+          shadow: { seq: 2, input: { a: 1 }, result: { done: true }, effects: [] },
+        },
+        {
+          stepName: "step-2-downstream",
+          occurrence: 0,
+          reusedFromParent: false,
+          inputChangedFromParent: false,
+          status: "only-in-parent",
+          parent: { seq: 3, input: { b: 2 }, result: { downstream: "ok" }, effects: [] },
+          shadow: null,
+        },
+      ],
+    };
+
+    const { container } = render(<DiffView diff={diffData} />);
+    expect(container.textContent).toContain("Only in Parent");
+    expect(container.textContent).toContain("Step did not execute in shadow fork.");
+    expect(container.textContent).toContain('"downstream": "ok"');
+  });
+
+  it("renders identical runs with all steps marked 'Reused from Parent'", () => {
+    const diffData: EffectDiffResponse = {
+      runId: "fork-identical",
+      isFork: true,
+      parentRunId: "parent-identical",
+      forkedFromSeq: 4,
+      mode: "shadow",
+      steps: [
+        {
+          stepName: "step-a",
+          occurrence: 0,
+          reusedFromParent: true,
+          inputChangedFromParent: false,
+          status: "reused",
+          parent: { seq: 2, input: {}, result: "A", effects: [] },
+          shadow: { seq: 2, input: {}, result: "A", effects: [] },
+        },
+        {
+          stepName: "step-b",
+          occurrence: 0,
+          reusedFromParent: true,
+          inputChangedFromParent: false,
+          status: "reused",
+          parent: { seq: 4, input: {}, result: "B", effects: [] },
+          shadow: { seq: 4, input: {}, result: "B", effects: [] },
+        },
+      ],
+    };
+
+    const { container } = render(<DiffView diff={diffData} />);
+    const badges = screen.getAllByText("Reused from Parent");
+    expect(badges.length).toBe(2);
+    expect(container.textContent).not.toContain("Modified");
+    expect(container.textContent).not.toContain("Added in Fork");
+  });
+
+  it("truncates payload over 200 characters and expands on click", async () => {
+    const longString = "A".repeat(300);
+    const diffData: EffectDiffResponse = {
+      runId: "fork-trunc",
+      isFork: true,
+      parentRunId: "parent-trunc",
+      forkedFromSeq: 2,
+      mode: "shadow",
+      steps: [
+        {
+          stepName: "step-long",
+          occurrence: 0,
+          reusedFromParent: false,
+          inputChangedFromParent: true,
+          status: "modified",
+          parent: { seq: 2, input: { val: "short" }, result: { val: "short" }, effects: [] },
+          shadow: { seq: 2, input: { val: longString }, result: { val: longString }, effects: [] },
+        },
+      ],
+    };
+
+    render(<DiffView diff={diffData} />);
+    // Look for "Show more" button
+    const showMoreButtons = screen.getAllByText(/Show more/);
+    expect(showMoreButtons.length).toBeGreaterThan(0);
+
+    // Click "Show more"
+    fireEvent.click(showMoreButtons[0]!);
+    expect(screen.getByText(/Show less/)).toBeDefined();
   });
 });

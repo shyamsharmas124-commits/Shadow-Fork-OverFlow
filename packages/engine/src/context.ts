@@ -147,6 +147,7 @@ export class RunContext implements Ctx {
 
     // Replay check
     let failedAttempts = 0;
+    const lastRunResumedIdx = this.history.map((e) => e.type).lastIndexOf("RunResumed");
     while (this.cursor < this.history.length) {
       const recorded = this.history[this.cursor];
       if (!recorded) break;
@@ -192,7 +193,9 @@ export class RunContext implements Ctx {
             .slice(this.cursor)
             .some((e) => e.type === "RunResumed");
 
-          failedAttempts++;
+          if (lastRunResumedIdx === -1 || this.cursor > lastRunResumedIdx) {
+            failedAttempts++;
+          }
           this.cursor++;
 
           if (!hasMoreEventsForThisStep && isRunFailedNext && !hasRunResumedLater) {

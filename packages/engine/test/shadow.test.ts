@@ -1832,5 +1832,44 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(output.token).toBe("[REDACTED]");
       expect(output.password).toBe("[REDACTED]");
     });
+
+    it("redactApiOutput handles non-plain values: Date, bigint, Buffer, undefined, null, and nested arrays", () => {
+      const now = new Date("2026-11-16T12:30:00.000Z");
+      const buffer = Buffer.from("hello durable engine", "utf-8");
+      const input = {
+        dateVal: now,
+        bigintVal: 9007199254740991000n,
+        bufferVal: buffer,
+        nullVal: null,
+        undefVal: undefined,
+        nestedArray: [
+          now,
+          1234567890123456789n,
+          Buffer.from("nested buffer", "utf-8"),
+          null,
+          undefined,
+          [{ innerDate: now, innerSecret: "sk-planted-inner-secret-999" }],
+        ],
+      };
+
+      const output = redactApiOutput(input);
+      expect(output.dateVal).toBe("2026-11-16T12:30:00.000Z");
+      expect(output.bigintVal).toBe("9007199254740991000");
+      expect(output.bufferVal).toBe(buffer.toString("base64"));
+      expect(output.nullVal).toBeNull();
+      expect(output.undefVal).toBeUndefined();
+
+      // Nested array asserts
+      expect(output.nestedArray[0]).toBe("2026-11-16T12:30:00.000Z");
+      expect(output.nestedArray[1]).toBe("1234567890123456789");
+      expect(output.nestedArray[2]).toBe(Buffer.from("nested buffer", "utf-8").toString("base64"));
+      expect(output.nestedArray[3]).toBeNull();
+      expect(output.nestedArray[4]).toBeUndefined();
+      const innerObj = (
+        output.nestedArray[5] as unknown as Array<{ innerDate: string; innerSecret: string }>
+      )[0]!;
+      expect(innerObj.innerDate).toBe("2026-11-16T12:30:00.000Z");
+      expect(innerObj.innerSecret).toBe("[REDACTED]");
+    });
   });
 });

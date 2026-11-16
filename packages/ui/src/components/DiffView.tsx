@@ -52,6 +52,8 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
         return <Badge variant="purple">Modified / Edited</Badge>;
       case "added":
         return <Badge variant="success">Added in Fork</Badge>;
+      case "failed-in-parent":
+        return <Badge variant="danger">Failed in Parent</Badge>;
       case "only-in-parent":
         return <Badge variant="default">Only in Parent</Badge>;
       case "live":
@@ -111,12 +113,26 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
                 </span>
                 <JsonTruncated data={item.parent.input} />
               </div>
-              <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
-                  Result
-                </span>
-                <JsonTruncated data={item.parent.result} />
-              </div>
+              {item.parent.failed ? (
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400 mb-1 block">
+                    Parent Error
+                  </span>
+                  <div
+                    data-testid="diff-parent-error"
+                    className="p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-200 font-mono text-xs break-all"
+                  >
+                    {item.parent.error ?? "Failed in parent"}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                    Result
+                  </span>
+                  <JsonTruncated data={item.parent.result} />
+                </div>
+              )}
               {item.parent.effects && item.parent.effects.length > 0 && (
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">

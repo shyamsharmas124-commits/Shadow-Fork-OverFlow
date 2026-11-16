@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Ctx, Engine, loadEvents } from "@durable/engine";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApiApp, isLoopback, startServer } from "../src/index.js";
+import { createApiApp, isLoopback, isValidHost, startServer } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
 describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
@@ -159,6 +159,70 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       expect(body.timing.completedAt).not.toBeNull();
       expect(typeof body.timing.durationMs).toBe("number");
       expect(body.timing.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("derives completedAt from the last terminal event after RunResumed, not the earlier RunFailed", async () => {
+      let shouldFail = true;
+      const wf = `wf_timing_resumed_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const a = await ctx.step("stepA", async () => 10, {});
+          const b = await ctx.step(
+            "stepB",
+            async () => {
+              if (shouldFail) throw new Error("StepB failed initially");
+              return 20;
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+          return { a, b };
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      // 1. Initial run fails
+      const runId = await engine.startRun(wf, {});
+      await engine.execute(runId);
+
+      const resFail = await app.request(`/runs/${runId}`);
+      expect(resFail.status).toBe(200);
+      const bodyFail = (await resFail.json()) as {
+        status: string;
+        timing: { startedAt: string; completedAt: string | null; durationMs: number | null };
+        events: Array<{ type: string; createdAt: string }>;
+      };
+      expect(bodyFail.status).toBe("failed");
+      const initialFailedEvent = bodyFail.events.find((e) => e.type === "RunFailed");
+      expect(bodyFail.timing.completedAt).toBe(initialFailedEvent?.createdAt);
+
+      // 2. Resume run after fixing failure
+      shouldFail = false;
+      const resResume = await app.request(`/runs/${runId}/resume`, { method: "POST" });
+      expect(resResume.status).toBe(200);
+
+      // 3. GET /runs/:id after resume completed
+      const resDone = await app.request(`/runs/${runId}`);
+      expect(resDone.status).toBe(200);
+      const bodyDone = (await resDone.json()) as {
+        status: string;
+        timing: { startedAt: string; completedAt: string | null; durationMs: number | null };
+        events: Array<{ type: string; createdAt: string }>;
+      };
+      expect(bodyDone.status).toBe("completed");
+      const resumedEvent = bodyDone.events.find((e) => e.type === "RunResumed");
+      const completedEvent = bodyDone.events.find((e) => e.type === "RunCompleted");
+      expect(resumedEvent).toBeDefined();
+      expect(completedEvent).toBeDefined();
+
+      // Terminal event used for completedAt is RunCompleted (after RunResumed), NOT initial RunFailed!
+      expect(bodyDone.timing.completedAt).toBe(completedEvent?.createdAt);
+      expect(bodyDone.timing.completedAt).not.toBe(initialFailedEvent?.createdAt);
+      expect(typeof bodyDone.timing.durationMs).toBe("number");
+      expect(bodyDone.timing.durationMs).toBe(
+        new Date(completedEvent!.createdAt).getTime() -
+          new Date(bodyDone.timing.startedAt).getTime(),
+      );
     });
   });
 
@@ -952,54 +1016,81 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
 
   describe("DNS Rebinding Protection & Host Validation", () => {
     it("isLoopback correctly validates loopback host variants and rejects non-loopback hosts", () => {
-      // Loopback hosts allowed
+      // The 7 specific test targets:
       expect(isLoopback("localhost")).toBe(true);
-      expect(isLoopback("localhost:3000")).toBe(true);
       expect(isLoopback("127.0.0.1")).toBe(true);
-      expect(isLoopback("127.0.0.1:3000")).toBe(true);
-      expect(isLoopback("127.0.0.42:5173")).toBe(true);
-      expect(isLoopback("127.255.255.255")).toBe(true);
+      expect(isLoopback("127.5.5.5")).toBe(true);
       expect(isLoopback("::1")).toBe(true);
+      expect(isLoopback("0.0.0.0")).toBe(false);
+      expect(isLoopback("10.0.0.1")).toBe(false);
+      expect(isLoopback("192.168.1.5")).toBe(false);
+
+      // Additional variants with ports
+      expect(isLoopback("localhost:3000")).toBe(true);
+      expect(isLoopback("127.0.0.1:3000")).toBe(true);
       expect(isLoopback("[::1]")).toBe(true);
       expect(isLoopback("[::1]:3000")).toBe(true);
-
-      // Non-loopback hosts strictly rejected
       expect(isLoopback("evil.example")).toBe(false);
       expect(isLoopback("evil.example:3000")).toBe(false);
       expect(isLoopback("attacker.com")).toBe(false);
-      expect(isLoopback("192.168.1.1")).toBe(false);
-      expect(isLoopback("10.0.0.1")).toBe(false);
-      expect(isLoopback("0.0.0.0")).toBe(false);
     });
 
-    it("rejects requests with Host: evil.example with 403 Forbidden on all routes without executing", async () => {
-      const engine = new Engine(pool, {});
-      const app = createApiApp({ engine, pool });
+    it("isValidHost strictly matches configured host and port, rejecting mismatched ports and non-allowlisted loopbacks", () => {
+      const opts = { port: 3000 };
 
-      // 1. GET /health with evil Host
-      const resHealth = await app.request("/health", {
+      // Configured host:port exact matches (localhost, 127.0.0.1, [::1])
+      expect(isValidHost("localhost:3000", opts)).toBe(true);
+      expect(isValidHost("127.0.0.1:3000", opts)).toBe(true);
+      expect(isValidHost("[::1]:3000", opts)).toBe(true);
+      expect(isValidHost("localhost", opts)).toBe(true);
+      expect(isValidHost("127.0.0.1", opts)).toBe(true);
+      expect(isValidHost("[::1]", opts)).toBe(true);
+
+      // Wrong port rejected (127.0.0.1:9999)
+      expect(isValidHost("127.0.0.1:9999", opts)).toBe(false);
+      expect(isValidHost("localhost:8080", opts)).toBe(false);
+      expect(isValidHost("[::1]:9999", opts)).toBe(false);
+
+      // Other hosts rejected
+      expect(isValidHost("127.5.5.5:3000", opts)).toBe(false);
+      expect(isValidHost("0.0.0.0", opts)).toBe(false);
+      expect(isValidHost("0.0.0.0:3000", opts)).toBe(false);
+      expect(isValidHost("10.0.0.1:3000", opts)).toBe(false);
+      expect(isValidHost("192.168.1.5:3000", opts)).toBe(false);
+      expect(isValidHost("evil.example", opts)).toBe(false);
+      expect(isValidHost("evil.example:3000", opts)).toBe(false);
+    });
+
+    it("rejects requests with Host: 127.0.0.1:9999 and Host: evil.example with 403 Forbidden", async () => {
+      const engine = new Engine(pool, {});
+      const app = createApiApp({ engine, pool, port: 3000 });
+
+      // Valid requests with configured port 3000 succeed
+      const resOk = await app.request("/health", {
+        headers: { Host: "127.0.0.1:3000" },
+      });
+      expect(resOk.status).toBe(200);
+
+      const resOkLocalhost = await app.request("/health", {
+        headers: { Host: "localhost:3000" },
+      });
+      expect(resOkLocalhost.status).toBe(200);
+
+      // Mismatched port: Host: 127.0.0.1:9999 is rejected with 403
+      const resWrongPort = await app.request("/health", {
+        headers: { Host: "127.0.0.1:9999" },
+      });
+      expect(resWrongPort.status).toBe(403);
+      const jsonWrongPort = (await resWrongPort.json()) as { error: string };
+      expect(jsonWrongPort.error).toContain("DNS rebinding protection");
+
+      // Host: evil.example rejected with 403
+      const resEvil = await app.request("/runs", {
         headers: { Host: "evil.example" },
       });
-      expect(resHealth.status).toBe(403);
-      const jsonHealth = (await resHealth.json()) as { error: string };
-      expect(jsonHealth.error).toContain("DNS rebinding protection");
-
-      // 2. GET /runs with evil Host
-      const resRuns = await app.request("/runs", {
-        headers: { Host: "evil.example:3000" },
-      });
-      expect(resRuns.status).toBe(403);
-
-      // 3. POST /runs with evil Host
-      const resPost = await app.request("/runs", {
-        method: "POST",
-        headers: {
-          Host: "attacker.com",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ workflowType: "foo", input: {} }),
-      });
-      expect(resPost.status).toBe(403);
+      expect(resEvil.status).toBe(403);
+      const jsonEvil = (await resEvil.json()) as { error: string };
+      expect(jsonEvil.error).toContain("DNS rebinding protection");
     });
   });
 

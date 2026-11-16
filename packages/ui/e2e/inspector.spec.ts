@@ -328,3 +328,145 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   expect(JSON.stringify(parentAfterEvents)).toBe(JSON.stringify(parentBeforeEvents));
   expect(JSON.stringify(parentAfterTasks)).toBe(JSON.stringify(parentBeforeTasks));
 });
+
+test("03. Diff View displays 'Failed in Parent' badge with parent error for failed step", async ({ page }) => {
+  const failedWf = `wf_failed_diff_${randomUUID().slice(0, 8)}`;
+  engine.register(failedWf, async (ctx: Ctx) => {
+    await ctx.step("step-init", () => ({ ready: true }), {});
+    return await ctx.step(
+      "step-charge-card",
+      () => {
+        throw new Error("CardDeclined: insufficient funds on card tok_visa_4242");
+      },
+      {},
+      { maxAttempts: 1 },
+    );
+  });
+
+  // 1. Parent run fails on step-charge-card
+  const parentFailedId = await engine.startRun(failedWf, { customer: "cust_123" });
+  await engine.execute(parentFailedId);
+
+  // 2. Fork from parent with mock for step-charge-card
+  const forkWithMockId = await engine.fork(parentFailedId, 2, {
+    mocks: [
+      {
+        stepName: "step-charge-card",
+        result: { status: "approved", txnId: "tx_mock_override_999" },
+      },
+    ],
+  });
+  await engine.execute(forkWithMockId);
+
+  // 3. Navigate to fork in UI
+  await page.goto(`http://localhost:5173/#${forkWithMockId}`);
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // 4. Click Diff Tab
+  const diffTab = page.locator('[data-testid="tab-diff"]');
+  await expect(diffTab).toBeVisible();
+  await diffTab.click();
+
+  const diffView = page.locator('[data-testid="diff-view"]');
+  await expect(diffView).toBeVisible();
+
+  // 5. Verify the step card for step-charge-card
+  const chargeStepCard = page.locator('[data-testid="diff-step-step-charge-card-0"]');
+  await expect(chargeStepCard).toBeVisible();
+
+  // Assert labeled "Failed in Parent", NOT "Added in Fork"
+  await expect(chargeStepCard).toContainText("Failed in Parent");
+  await expect(chargeStepCard).not.toContainText("Added in Fork");
+
+  // Assert parent error card shows redacted error
+  const parentError = chargeStepCard.locator('[data-testid="diff-parent-error"]');
+  await expect(parentError).toBeVisible();
+  await expect(parentError).toContainText("CardDeclined: insufficient funds");
+
+  // Assert shadow side displays mock result
+  await expect(chargeStepCard).toContainText("tx_mock_override_999");
+  await expect(chargeStepCard).toContainText("mock");
+
+  // Screenshot 6: Failed in Parent Diff View
+  const screenshot6 = resolve(screenshotsDir, "06-failed-in-parent-diff.png");
+  await page.screenshot({ path: screenshot6, fullPage: true });
+  expect(statSync(screenshot6).size).toBeGreaterThan(0);
+});
+
+test("04. XSS Safety & In-Memory Token Isolation", async ({ page }) => {
+  // Assert no unhandled dialogs fire (e.g. alert(1))
+  let dialogFired = false;
+  page.on("dialog", (dialog) => {
+    dialogFired = true;
+    dialog.dismiss().catch(() => {});
+  });
+
+  const xssWf = `wf_xss_${randomUUID().slice(0, 8)}`;
+  engine.register(xssWf, async (ctx: Ctx) => {
+    return await ctx.step(
+      "step-xss",
+      () => ({
+        msg: "Harmless payload display",
+      }),
+      {},
+    );
+  });
+
+  // Seed run with malicious HTML & script payloads in input
+  const xssInput = {
+    imgXss: '<img src=x onerror="window.__pwned=1">',
+    scriptXss: '<script>window.__pwned=1</script>',
+    htmlPayload: '<b onmouseover="window.__pwned=1">hover</b>',
+  };
+  const xssRunId = await engine.startRun(xssWf, xssInput);
+  await engine.execute(xssRunId);
+
+  // Navigate to Run Detail
+  await page.goto(`http://localhost:5173/#${xssRunId}`);
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // Assert window.__pwned is strictly undefined
+  // biome-ignore lint/suspicious/noExplicitAny: verify window property wasn't set by XSS
+  const isPwned = await page.evaluate(() => (window as any).__pwned);
+  expect(isPwned).toBeUndefined();
+  expect(dialogFired).toBe(false);
+
+  // Click Seq #1 (RunStarted) to inspect the XSS input payload in Event Inspection panel
+  const event1Btn = page.locator('[data-testid="event-item-1"]');
+  await event1Btn.click();
+
+  // Assert literal text is rendered harmlessly in the DOM
+  const pageBody = await page.locator("body").innerText();
+  expect(pageBody).toContain("<img src=x onerror=");
+  expect(pageBody).toContain("window.__pwned=1");
+  expect(pageBody).toContain("<script>window.__pwned=1</script>");
+
+  // Assert NO executable script or img with onerror exists in DOM
+  const injectedImgs = await page.locator('img[src="x"]').count();
+  expect(injectedImgs).toBe(0);
+
+  // Open Fork Modal and enter an API Token
+  const forkBtn = page.locator('[data-testid="open-fork-modal-btn"]');
+  await forkBtn.click();
+  await page.waitForSelector('[data-testid="fork-modal"]');
+
+  const testToken = "test-secret-bearer-token-in-memory-only-xyz123";
+  const tokenInput = page.locator('[data-testid="fork-token-input"]');
+  await tokenInput.fill(testToken);
+
+  // Verify API Token isolation: MUST NOT exist in localStorage, sessionStorage, cookies, or URL
+  const storageData = await page.evaluate(() => ({
+    localStorage: JSON.stringify(window.localStorage),
+    sessionStorage: JSON.stringify(window.sessionStorage),
+    url: window.location.href,
+  }));
+
+  expect(storageData.localStorage).not.toContain(testToken);
+  expect(storageData.sessionStorage).not.toContain(testToken);
+  expect(storageData.url).not.toContain(testToken);
+
+  const cookies = await page.context().cookies();
+  for (const cookie of cookies) {
+    expect(cookie.value).not.toContain(testToken);
+  }
+});

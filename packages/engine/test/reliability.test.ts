@@ -699,6 +699,12 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
 
     // (c) Events table: strictly append-only, NO events deleted or edited
     const finalEvents = await loadEvents(pool, runId);
+    console.log(
+      "Resumed run full event sequence:\n" +
+        finalEvents
+          .map((e) => `  [seq ${e.seq}] ${e.type} -> ${JSON.stringify(e.payload)}`)
+          .join("\n"),
+    );
     const eventTypes = finalEvents.map((e) => e.type);
     expect(eventTypes).toEqual([
       "RunStarted",
@@ -726,6 +732,123 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     }>("SELECT step_key, status, attempt FROM tasks WHERE run_id = $1 ORDER BY id ASC", [runId]);
     expect(taskRows.length).toBe(2);
     expect(taskRows.every((t) => t.status === "completed")).toBe(true);
+
+    // Clean up
+    await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+  });
+
+  it("failed-run resume provides a fresh attempt budget (step fails once after resume, retries, and succeeds on attempt 2)", async () => {
+    const clock = new ManualClock(new Date("2030-01-01T00:00:00.000Z"));
+    let step1Calls = 0;
+    let step2Calls = 0;
+    // Step 2 will fail 2 times initially (exhausting maxAttempts: 2)
+    // Then on resume, it will fail 1 more time before succeeding on attempt 2
+    let failuresRemaining = 3;
+
+    const wfType = `wf_fresh_attempt_budget_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(
+      pool,
+      {
+        [wfType]: async (ctx: Ctx) => {
+          const r1 = await ctx.step(
+            "step-1",
+            () => {
+              step1Calls++;
+              return "step-1-done";
+            },
+            {},
+          );
+
+          const r2 = await ctx.step(
+            "step-2",
+            () => {
+              step2Calls++;
+              if (failuresRemaining > 0) {
+                failuresRemaining--;
+                throw new Error(`Transient failure (${step2Calls})`);
+              }
+              return "step-2-done";
+            },
+            {},
+            {
+              maxAttempts: 2,
+              initialBackoffMs: 100,
+              backoffMultiplier: 2,
+              randomFn: () => 1.0,
+            },
+          );
+
+          return { r1, r2 };
+        },
+      },
+      clock,
+    );
+
+    // 1. Initial run: step 1 succeeds, step 2 fails attempt 1, schedules retry
+    const runId = await engine.startRun(wfType, {});
+    let outcome = await engine.execute(runId);
+    expect(outcome.status).toBe("running");
+    expect(step1Calls).toBe(1);
+    expect(step2Calls).toBe(1);
+    expect(failuresRemaining).toBe(2);
+
+    // Advance clock past retry backoff and run attempt 2 -> exhausts maxAttempts (2) -> fails run
+    clock.advance(200);
+    outcome = await engine.execute(runId);
+    expect(outcome.status).toBe("failed");
+    expect(step1Calls).toBe(1);
+    expect(step2Calls).toBe(2);
+    expect(failuresRemaining).toBe(1); // 1 failure still remaining
+
+    const eventsBefore = await loadEvents(pool, runId);
+    expect(eventsBefore.map((e) => e.type)).toEqual([
+      "RunStarted",
+      "StepCompleted",
+      "StepFailed",
+      "StepFailed",
+      "RunFailed",
+    ]);
+
+    // 2. Resume run: step 2 gets fresh budget of 2 attempts.
+    // It fails on attempt 1 after resume (failuresRemaining becomes 0), schedules retry
+    outcome = await engine.execute(runId, { resumeFailed: true });
+    expect(outcome.status).toBe("running");
+    expect(step1Calls).toBe(1); // Step 1 never re-executed
+    expect(step2Calls).toBe(3); // 2 in first run + 1 in resumed run
+    expect(failuresRemaining).toBe(0);
+
+    // Advance clock past retry backoff and run attempt 2 after resume -> succeeds!
+    clock.advance(200);
+    outcome = await engine.execute(runId);
+    expect(outcome.status).toBe("completed");
+    expect(step1Calls).toBe(1); // Still 1
+    expect(step2Calls).toBe(4); // 2 in first run + 2 in resumed run
+    if (outcome.status === "completed") {
+      expect(outcome.result).toEqual({ r1: "step-1-done", r2: "step-2-done" });
+    }
+
+    const eventsAfter = await loadEvents(pool, runId);
+    console.log(
+      "Fresh attempt budget event sequence:\n" +
+        eventsAfter
+          .map((e) => `  [seq ${e.seq}] ${e.type} -> ${JSON.stringify(e.payload)}`)
+          .join("\n"),
+    );
+    const eventTypes = eventsAfter.map((e) => e.type);
+    expect(eventTypes).toEqual([
+      "RunStarted",
+      "StepCompleted",
+      "StepFailed",
+      "StepFailed",
+      "RunFailed",
+      "RunResumed",
+      "StepFailed",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+
+    // Verify sequences are strictly contiguous 1..9 with no gaps or modifications
+    expect(eventsAfter.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     // Clean up
     await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);

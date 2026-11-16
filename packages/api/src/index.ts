@@ -4,6 +4,7 @@ export {
   createApiApp,
   type EffectDiffItem,
   isLoopback,
+  isValidHost,
   safeCompareTokens,
 } from "./api.js";
 

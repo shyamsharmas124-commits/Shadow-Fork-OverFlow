@@ -35,6 +35,14 @@ export function redactApiOutput<T>(data: T): T {
     return data;
   }
 
+  if (typeof data === "bigint") {
+    return data.toString() as unknown as T;
+  }
+
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
+    return data.toString("base64") as unknown as T;
+  }
+
   if (data instanceof Date) {
     return data.toISOString() as unknown as T;
   }

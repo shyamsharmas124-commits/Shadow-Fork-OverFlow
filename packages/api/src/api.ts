@@ -21,6 +21,7 @@ export interface CreateApiOptions {
   maxLimit?: number;
   apiToken?: string;
   host?: string;
+  port?: number;
 }
 
 export function safeCompareTokens(provided: string, expected: string): boolean {
@@ -50,16 +51,40 @@ export function isLoopback(host?: string): boolean {
   return /^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(h);
 }
 
+export function isValidHost(rawHost: string, options?: { port?: number; host?: string }): boolean {
+  if (!rawHost) return false;
+  const h = rawHost.trim().toLowerCase();
+  const port = options?.port ?? 3000;
+  const configuredHost = options?.host?.toLowerCase().trim();
+
+  // Allowed base hosts on loopback
+  const allowedBases = ["localhost", "127.0.0.1", "[::1]"];
+  if (configuredHost && !allowedBases.includes(configuredHost)) {
+    allowedBases.push(configuredHost);
+  }
+
+  // Exact matching list: base with configured port, or bare base
+  for (const base of allowedBases) {
+    if (h === `${base}:${port}` || h === base) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export interface EffectDiffItem {
   stepName: string;
   occurrence: number;
   reusedFromParent: boolean;
   inputChangedFromParent: boolean;
-  status: "reused" | "modified" | "added" | "live" | "only-in-parent";
+  status: "reused" | "modified" | "added" | "live" | "only-in-parent" | "failed-in-parent";
   parent: {
     seq?: number;
     input?: unknown;
     result?: unknown;
+    error?: string;
+    failed?: boolean;
     effects: Array<{
       kind: string;
       request: unknown;
@@ -71,6 +96,8 @@ export interface EffectDiffItem {
     seq?: number;
     input?: unknown;
     result?: unknown;
+    error?: string;
+    failed?: boolean;
     effects: Array<{
       kind: string;
       request: unknown;
@@ -152,7 +179,9 @@ export function buildEffectDiff(
     name: string;
     occurrence: number;
     input: unknown;
-    result: unknown;
+    result?: unknown;
+    error?: string;
+    failed?: boolean;
     effects: Array<{
       kind: string;
       request: unknown;
@@ -194,14 +223,52 @@ export function buildEffectDiff(
         const p = ev.payload as { name: string; input: unknown; result: unknown };
         const occ = occMap[p.name] ?? 0;
         occMap[p.name] = occ + 1;
-        list.push({
-          seq: ev.seq,
-          name: p.name,
-          occurrence: occ,
-          input: p.input,
-          result: p.result,
-          effects: pendingEffects[p.name] ?? [],
-        });
+        const existingIdx = list.findIndex((s) => s.name === p.name && s.occurrence === occ);
+        if (existingIdx !== -1) {
+          list[existingIdx] = {
+            seq: ev.seq,
+            name: p.name,
+            occurrence: occ,
+            input: p.input,
+            result: p.result,
+            failed: false,
+            effects: [...list[existingIdx]!.effects, ...(pendingEffects[p.name] ?? [])],
+          };
+        } else {
+          list.push({
+            seq: ev.seq,
+            name: p.name,
+            occurrence: occ,
+            input: p.input,
+            result: p.result,
+            failed: false,
+            effects: pendingEffects[p.name] ?? [],
+          });
+        }
+        delete pendingEffects[p.name];
+      } else if (ev.type === "StepFailed") {
+        const p = ev.payload as { name: string; input?: unknown; error: string };
+        const occ = occMap[p.name] ?? 0;
+        const existingIdx = list.findIndex((s) => s.name === p.name && s.occurrence === occ);
+        if (existingIdx !== -1) {
+          list[existingIdx]!.seq = ev.seq;
+          list[existingIdx]!.error = p.error;
+          list[existingIdx]!.failed = true;
+          if (p.input !== undefined) list[existingIdx]!.input = p.input;
+          if (pendingEffects[p.name]) {
+            list[existingIdx]!.effects.push(...pendingEffects[p.name]!);
+          }
+        } else {
+          list.push({
+            seq: ev.seq,
+            name: p.name,
+            occurrence: occ,
+            input: p.input,
+            error: p.error,
+            failed: true,
+            effects: pendingEffects[p.name] ?? [],
+          });
+        }
         delete pendingEffects[p.name];
       }
     }
@@ -229,7 +296,9 @@ export function buildEffectDiff(
     }
 
     let status: EffectDiffItem["status"] = "live";
-    if (isReused) {
+    if (parentMatch?.failed) {
+      status = "failed-in-parent";
+    } else if (isReused) {
       status = "reused";
     } else if (!parentMatch) {
       status = "added";
@@ -248,6 +317,8 @@ export function buildEffectDiff(
             seq: parentMatch.seq,
             input: parentMatch.input,
             result: parentMatch.result,
+            error: parentMatch.error,
+            failed: parentMatch.failed,
             effects: parentMatch.effects,
           }
         : null,
@@ -255,6 +326,8 @@ export function buildEffectDiff(
         seq: shadowStep.seq,
         input: shadowStep.input,
         result: shadowStep.result,
+        error: shadowStep.error,
+        failed: shadowStep.failed,
         effects: shadowStep.effects,
       },
     });
@@ -270,11 +343,13 @@ export function buildEffectDiff(
         occurrence: parentStep.occurrence,
         reusedFromParent: false,
         inputChangedFromParent: false,
-        status: "only-in-parent",
+        status: parentStep.failed ? "failed-in-parent" : "only-in-parent",
         parent: {
           seq: parentStep.seq,
           input: parentStep.input,
           result: parentStep.result,
+          error: parentStep.error,
+          failed: parentStep.failed,
           effects: parentStep.effects,
         },
         shadow: null,
@@ -359,7 +434,7 @@ export function createApiApp(options: CreateApiOptions): Hono {
   // DNS Rebinding Protection: validate Host header for ALL routes
   app.use("*", async (c, next) => {
     const rawHost = c.req.header("host") || new URL(c.req.url).host;
-    if (!rawHost || !isLoopback(rawHost)) {
+    if (!rawHost || !isValidHost(rawHost, { port: options.port, host: options.host })) {
       return c.json({ error: "Forbidden: invalid Host header (DNS rebinding protection)" }, 403);
     }
     await next();
@@ -530,7 +605,7 @@ export function createApiApp(options: CreateApiOptions): Hono {
 
     const result = rows.map((row) => {
       const startedAt = row.started_at ?? row.created_at;
-      const completedAt = row.completed_at;
+      const completedAt = row.status === "running" ? null : row.completed_at;
       const durationMs = completedAt
         ? new Date(completedAt).getTime() - new Date(startedAt).getTime()
         : null;

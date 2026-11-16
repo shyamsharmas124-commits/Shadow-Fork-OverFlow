@@ -66,6 +66,10 @@ export class Engine {
     return Object.keys(this.workflows);
   }
 
+  register(workflowType: string, fn: WorkflowFn): void {
+    this.workflows[workflowType] = fn;
+  }
+
   async reap(now?: Date, workflowTypes?: string[]): Promise<string[]> {
     const types =
       workflowTypes ?? (this.getWorkflowTypes().length > 0 ? this.getWorkflowTypes() : undefined);
