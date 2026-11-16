@@ -11,7 +11,7 @@ async function main() {
     if (!process.env.ANTHROPIC_MODEL) {
       console.error("ERROR: ANTHROPIC_API_KEY is provided but ANTHROPIC_MODEL is not set.");
       console.error(
-        "Please export ANTHROPIC_MODEL (e.g. claude-3-5-sonnet-20241022). No fallback is permitted.",
+        "Please export ANTHROPIC_MODEL (e.g. <model-id-from-docs> from https://platform.claude.com/docs/en/about-claude/models/overview). No fallback is permitted.",
       );
       process.exit(1);
     }
@@ -23,7 +23,7 @@ async function main() {
     console.log("* RUNNING DEMO WITH DETERMINISTIC RECORDED FALLBACK FIXTURES.                 *");
     console.log("* TO USE REAL ANTHROPIC LLM INVOICE EXTRACTION, EXPORT:                       *");
     console.log('*   ANTHROPIC_API_KEY="sk-ant-..."                                            *');
-    console.log('*   ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"                              *');
+    console.log('*   ANTHROPIC_MODEL="<model-id-from-docs>"                                    *');
     console.log(
       "*******************************************************************************\n",
     );
