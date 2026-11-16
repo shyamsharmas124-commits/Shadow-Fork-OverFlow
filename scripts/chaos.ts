@@ -49,7 +49,7 @@ export async function runChaosIteration(
 ): Promise<IterationReport> {
   const numWorkflows = options.numWorkflows ?? 10;
   const numWorkers = options.numWorkers ?? 3;
-  const maxDurationMs = options.maxDurationMs ?? 40000;
+  const maxDurationMs = options.maxDurationMs ?? 45000;
   const startTime = Date.now();
 
   // 1. External Mock HTTP Service in COUNT-ONLY mode (no deduplication)
@@ -186,6 +186,9 @@ export async function runChaosIteration(
   while (Date.now() - startTime < maxDurationMs) {
     const completed = await checkCompletion();
     if (completed === numWorkflows) break;
+    try {
+      await reapTasks(pool, new Date(), [CHAOS_WORKFLOW_TYPE]);
+    } catch {}
     await new Promise((r) => setTimeout(r, 200));
   }
 
