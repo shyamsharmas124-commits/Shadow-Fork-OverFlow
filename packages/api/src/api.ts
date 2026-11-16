@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
   type Engine,
   type ForkEdit,
@@ -16,6 +17,24 @@ export interface CreateApiOptions {
   pool: Pool;
   corsOrigin?: string;
   maxLimit?: number;
+  apiToken?: string;
+  host?: string;
+}
+
+export function safeCompareTokens(provided: string, expected: string): boolean {
+  const bufA = Buffer.from(provided, "utf-8");
+  const bufB = Buffer.from(expected, "utf-8");
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
+
+export function isLoopback(host?: string): boolean {
+  if (!host) return true;
+  const h = host.toLowerCase().trim();
+  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h.startsWith("127.");
 }
 
 export interface EffectDiffItem {
@@ -279,6 +298,20 @@ export function createApiApp(options: CreateApiOptions): Hono {
   const { engine, pool } = options;
   const configuredCorsOrigin = options.corsOrigin ?? "http://localhost:5173";
   const MAX_LIMIT = options.maxLimit ?? 50;
+  const host = options.host ?? "127.0.0.1";
+  const apiToken = options.apiToken ?? process.env.API_TOKEN;
+
+  if (host !== "127.0.0.1") {
+    console.warn(
+      `[SECURITY WARNING] Binding API server to non-default host '${host}'. Ensure API is secured behind a trusted proxy or firewall.`,
+    );
+  }
+
+  if (!isLoopback(host) && !apiToken) {
+    throw new Error(
+      `Refusing to start API server on non-loopback host '${host}' without API_TOKEN configured.`,
+    );
+  }
 
   const app = new Hono();
 
@@ -295,6 +328,22 @@ export function createApiApp(options: CreateApiOptions): Hono {
       },
     }),
   );
+
+  // Authentication middleware for mutating endpoints
+  app.use("*", async (c, next) => {
+    const isMutating = ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method.toUpperCase());
+    if (isMutating && apiToken) {
+      const authHeader = c.req.header("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      const token = authHeader.slice("Bearer ".length).trim();
+      if (!safeCompareTokens(token, apiToken)) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    }
+    await next();
+  });
 
   // Generic 500 error handler: never leak SQL text, internal schema, or stack traces
   app.onError((_err, c) => {
@@ -664,54 +713,65 @@ export function createApiApp(options: CreateApiOptions): Hono {
   /**
    * 5. POST /runs/:id/resume
    * Resumes failed or stalled run.
+   * Serialized per runId via Postgres advisory locks to ensure simultaneous resume calls
+   * produce exactly 1 task & 1 execution.
    */
   app.post("/runs/:id/resume", async (c) => {
     const id = c.req.param("id");
 
-    const { rows: runRows } = await pool.query<{
-      id: string;
-      workflow_type: string;
-      status: string;
-      mode: string;
-    }>(`SELECT id, workflow_type, status, mode FROM runs WHERE id = $1`, [id]);
-
-    const run = runRows[0];
-    if (!run) {
-      return c.json({ error: `Run not found: ${id}` }, 404);
-    }
-
-    if (run.status === "completed") {
-      return c.json(
-        redactApiOutput({
-          success: true,
-          runId: id,
-          status: "completed",
-          message: "Run is already completed",
-        }),
-      );
-    }
-
+    const client = await pool.connect();
     try {
-      await engine.reap();
+      // Advisory lock serialized per run ID
+      await client.query(`SELECT pg_advisory_lock(hashtext($1))`, [id]);
+      try {
+        const { rows: runRows } = await client.query<{
+          id: string;
+          workflow_type: string;
+          status: string;
+          mode: string;
+        }>(`SELECT id, workflow_type, status, mode FROM runs WHERE id = $1`, [id]);
 
-      await pool.query(
-        `UPDATE tasks SET run_at = now() WHERE run_id = $1 AND status = 'pending' AND run_at > now()`,
-        [id],
-      );
+        const run = runRows[0];
+        if (!run) {
+          return c.json({ error: `Run not found: ${id}` }, 404);
+        }
 
-      const outcome = await engine.execute(id, { resumeFailed: true });
+        if (run.status === "completed") {
+          return c.json(
+            redactApiOutput({
+              success: true,
+              runId: id,
+              status: "completed",
+              message: "Run is already completed",
+            }),
+          );
+        }
 
-      return c.json(
-        redactApiOutput({
-          success: outcome.status === "completed",
-          runId: id,
-          status: outcome.status,
-          outcome,
-        }),
-      );
+        await engine.reap();
+
+        await client.query(
+          `UPDATE tasks SET run_at = now() WHERE run_id = $1 AND status = 'pending' AND run_at > now()`,
+          [id],
+        );
+
+        const outcome = await engine.execute(id, { resumeFailed: true });
+
+        return c.json(
+          redactApiOutput({
+            success: outcome.status === "completed",
+            runId: id,
+            status: outcome.status,
+            outcome,
+          }),
+        );
+      } finally {
+        await client.query(`SELECT pg_advisory_unlock(hashtext($1))`, [id]).catch(() => {});
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json(redactApiOutput({ error: message }), 500);
+    } finally {
+      client.release();
     }
   });
 

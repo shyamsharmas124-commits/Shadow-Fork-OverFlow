@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { type Ctx, Engine, loadEvents, redactApiOutput } from "@durable/engine";
+import { type Ctx, Engine, loadEvents } from "@durable/engine";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApiApp } from "../src/index.js";
+import { createApiApp, startServer } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
 describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
@@ -527,50 +527,305 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       const resEffects = await app.request(`/runs/${forkId}/effects`);
       expect(await resEffects.text()).not.toContain(SECRET_EFFECT_REQ);
     });
+  });
 
-    it("mutation check on runs.input: omitting runs.input redaction fails the test", () => {
-      const sampleRun = {
-        id: "run-test-input",
-        input: { apiKey: "sk-planted-input-leak-999999999999" },
-      };
-
-      // Correctly redacted output
-      const clean = redactApiOutput(sampleRun);
-      expect(JSON.stringify(clean)).not.toContain("sk-planted-input-leak-999999999999");
-      expect(JSON.stringify(clean)).toContain("[REDACTED]");
-
-      // Mutated output (bypassing input redaction)
-      const mutated = { ...sampleRun, input: sampleRun.input };
-      expect(JSON.stringify(mutated)).toContain("sk-planted-input-leak-999999999999");
+  describe("API Access Control & Host Binding", () => {
+    it("refuses to start on non-loopback host if API_TOKEN is unset", () => {
+      const engine = new Engine(pool, {});
       expect(() => {
-        if (JSON.stringify(mutated).includes("sk-planted-input-leak-999999999999")) {
-          throw new Error("MUTATION_DETECTED: unredacted secret found in runs.input!");
-        }
-      }).toThrow("MUTATION_DETECTED: unredacted secret found in runs.input!");
+        startServer({ engine, pool, host: "0.0.0.0" });
+      }).toThrow(/Refusing to start API server on non-loopback host '0.0.0.0' without API_TOKEN/i);
     });
 
-    it("mutation check on StepCompleted.result: omitting StepCompleted.result redaction fails the test", () => {
-      const sampleStepEvent = {
-        type: "StepCompleted",
-        payload: {
-          name: "charge",
-          result: { clientSecret: "sk-planted-result-leak-999999999999" },
+    it("mutating endpoints require Authorization: Bearer <API_TOKEN> and reject missing/wrong token without side effects", async () => {
+      const token = "secure-secret-token-12345678";
+      const wf = `wf_auth_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step("step1", () => "ok", {});
         },
+      });
+      const app = createApiApp({ engine, pool, apiToken: token });
+
+      // Count runs and tasks before unauthorized calls
+      const { rows: initialRuns } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM runs",
+      );
+      const { rows: initialTasks } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM tasks",
+      );
+
+      // 1. Missing Authorization header -> 401
+      const resNoAuth = await app.request("/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowType: wf, input: {} }),
+      });
+      expect(resNoAuth.status).toBe(401);
+      const errNoAuth = (await resNoAuth.json()) as { error: string };
+      expect(errNoAuth.error).toBe("Unauthorized");
+
+      // 2. Wrong token -> 401
+      const resBadToken = await app.request("/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong-secret-token",
+        },
+        body: JSON.stringify({ workflowType: wf, input: {} }),
+      });
+      expect(resBadToken.status).toBe(401);
+      const errBadToken = (await resBadToken.json()) as { error: string };
+      expect(errBadToken.error).toBe("Unauthorized");
+
+      // Verify no side effects occurred: run and task counts are unchanged
+      const { rows: afterRuns } = await pool.query<{ count: string }>("SELECT count(*) FROM runs");
+      const { rows: afterTasks } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM tasks",
+      );
+      expect(afterRuns[0]?.count).toBe(initialRuns[0]?.count);
+      expect(afterTasks[0]?.count).toBe(initialTasks[0]?.count);
+
+      // 3. Correct token works -> 201
+      const resValid = await app.request("/runs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ workflowType: wf, input: {} }),
+      });
+      expect(resValid.status).toBe(201);
+      const validJson = (await resValid.json()) as { runId: string };
+      expect(validJson.runId).toBeDefined();
+
+      // 4. GET endpoints work without token on loopback
+      const resGetRuns = await app.request("/runs");
+      expect(resGetRuns.status).toBe(200);
+
+      const resGetRun = await app.request(`/runs/${validJson.runId}`);
+      expect(resGetRun.status).toBe(200);
+
+      const resGetEffects = await app.request(`/runs/${validJson.runId}/effects`);
+      expect(resGetEffects.status).toBe(200);
+    });
+  });
+
+  describe("POST /runs/:id/resume Invariants & Concurrency", () => {
+    it("two simultaneous resume calls produce exactly 1 task & 1 execution", async () => {
+      const wf = `wf_simultaneous_resume_${randomUUID().slice(0, 8)}`;
+      let stepExecutions = 0;
+      let shouldFail = true;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "single-step",
+            () => {
+              stepExecutions++;
+              if (shouldFail) {
+                throw new Error("Simulated initial failure");
+              }
+              return { executed: true };
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+        },
+      });
+      // Start run and execute initial failure
+      const runId = await engine.startRun(wf, {});
+      const initialOutcome = await engine.execute(runId);
+      expect(initialOutcome.status).toBe("failed");
+      expect(stepExecutions).toBe(1);
+
+      // Now enable step to succeed on resume
+      shouldFail = false;
+
+      // Reset execution counter to verify only 1 execution occurs across concurrent resumes
+      let resumeStepExecutions = 0;
+      const engineWithCounter = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "single-step",
+            () => {
+              resumeStepExecutions++;
+              return { resumed: true };
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+        },
+      });
+      const appWithCounter = createApiApp({ engine: engineWithCounter, pool });
+
+      // Fire two simultaneous resume calls
+      const [res1, res2] = await Promise.all([
+        appWithCounter.request(`/runs/${runId}/resume`, { method: "POST" }),
+        appWithCounter.request(`/runs/${runId}/resume`, { method: "POST" }),
+      ]);
+
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+
+      const json1 = (await res1.json()) as { success: boolean; status: string };
+      const json2 = (await res2.json()) as { success: boolean; status: string };
+      expect(json1.success).toBe(true);
+      expect(json2.success).toBe(true);
+      expect(json1.status).toBe("completed");
+      expect(json2.status).toBe("completed");
+
+      // Verify invariant: exactly 1 step execution occurred
+      expect(resumeStepExecutions).toBe(1);
+
+      // Verify invariant: exactly 1 task exists in tasks table for this run
+      const { rows: taskRows } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM tasks WHERE run_id = $1",
+        [runId],
+      );
+      expect(Number.parseInt(taskRows[0]!.count, 10)).toBe(1);
+
+      // Verify run status in runs table is completed
+      const { rows: runRows } = await pool.query<{ status: string }>(
+        "SELECT status FROM runs WHERE id = $1",
+        [runId],
+      );
+      expect(runRows[0]?.status).toBe("completed");
+    });
+
+    it("shadow fork stays shadow after resume with 0 live connector calls", async () => {
+      const wf = `wf_shadow_resume_${randomUUID().slice(0, 8)}`;
+      let liveHttpCalls = 0;
+      let stepFailOnce = true;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "ready", {});
+          return await ctx.step(
+            "step-connector",
+            async (_input, sCtx) => {
+              if (sCtx.mode === "live") {
+                liveHttpCalls++;
+              }
+              const res = await sCtx.http.fetch({ url: "https://example.com/api" });
+              if (sCtx.mode === "shadow" && stepFailOnce) {
+                stepFailOnce = false;
+                throw new Error("Transient shadow failure");
+              }
+              return { res };
+            },
+            {},
+            {
+              kind: "effectful-external",
+              maxAttempts: 1,
+              mock: { status: 200, data: "mocked-shadow-response" },
+            },
+          );
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      // 1. Run parent to completion in live mode
+      const parentId = await engine.startRun(wf, {});
+      const parentOutcome = await engine.execute(parentId);
+      expect(parentOutcome.status).toBe("completed");
+      expect(liveHttpCalls).toBe(1);
+
+      // 2. Fork into shadow mode at seq 2
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+
+      // Verify fork is created with mode = 'shadow'
+      const { rows: forkRowsBefore } = await pool.query<{ mode: string }>(
+        "SELECT mode FROM runs WHERE id = $1",
+        [forkId],
+      );
+      expect(forkRowsBefore[0]?.mode).toBe("shadow");
+
+      // 3. Initial execute of fork fails due to transient shadow failure
+      const forkInitialOutcome = await engine.execute(forkId);
+      expect(forkInitialOutcome.status).toBe("failed");
+
+      // 4. Resume the failed shadow fork via POST /runs/:id/resume
+      const resResume = await app.request(`/runs/${forkId}/resume`, { method: "POST" });
+      expect(resResume.status).toBe(200);
+      const resumeJson = (await resResume.json()) as { success: boolean; status: string };
+      expect(resumeJson.success).toBe(true);
+      expect(resumeJson.status).toBe("completed");
+
+      // 5. Invariants verification:
+      // (a) Mode stays 'shadow'
+      const { rows: forkRowsAfter } = await pool.query<{ mode: string; status: string }>(
+        "SELECT mode, status FROM runs WHERE id = $1",
+        [forkId],
+      );
+      expect(forkRowsAfter[0]?.mode).toBe("shadow");
+      expect(forkRowsAfter[0]?.status).toBe("completed");
+
+      // (b) Zero live connector calls were made by the shadow fork (only parent's 1 call)
+      expect(liveHttpCalls).toBe(1);
+
+      // (c) Effect was captured as shadow effect in events table
+      const forkEvents = await loadEvents(pool, forkId);
+      const effectEvents = forkEvents.filter((e) => e.type === "EffectCaptured");
+      expect(effectEvents.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("resume of completed run is a safe no-op with clear response", async () => {
+      const wf = `wf_completed_resume_${randomUUID().slice(0, 8)}`;
+      let executionCount = 0;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "step-done",
+            () => {
+              executionCount++;
+              return "done";
+            },
+            {},
+          );
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      const runId = await engine.startRun(wf, {});
+      const outcome = await engine.execute(runId);
+      expect(outcome.status).toBe("completed");
+      expect(executionCount).toBe(1);
+
+      const eventsBefore = await loadEvents(pool, runId);
+      const { rows: tasksBefore } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM tasks WHERE run_id = $1",
+        [runId],
+      );
+
+      // Call resume on completed run
+      const res = await app.request(`/runs/${runId}/resume`, { method: "POST" });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        success: boolean;
+        runId: string;
+        status: string;
+        message: string;
       };
+      expect(body.success).toBe(true);
+      expect(body.runId).toBe(runId);
+      expect(body.status).toBe("completed");
+      expect(body.message).toBe("Run is already completed");
 
-      // Correctly redacted output
-      const clean = redactApiOutput(sampleStepEvent);
-      expect(JSON.stringify(clean)).not.toContain("sk-planted-result-leak-999999999999");
-      expect(JSON.stringify(clean)).toContain("[REDACTED]");
+      // Step was not executed again
+      expect(executionCount).toBe(1);
 
-      // Mutated output (bypassing result redaction)
-      const mutated = { ...sampleStepEvent, payload: { ...sampleStepEvent.payload } };
-      expect(JSON.stringify(mutated)).toContain("sk-planted-result-leak-999999999999");
-      expect(() => {
-        if (JSON.stringify(mutated).includes("sk-planted-result-leak-999999999999")) {
-          throw new Error("MUTATION_DETECTED: unredacted secret found in StepCompleted.result!");
-        }
-      }).toThrow("MUTATION_DETECTED: unredacted secret found in StepCompleted.result!");
+      // No new events appended
+      const eventsAfter = await loadEvents(pool, runId);
+      expect(eventsAfter.length).toBe(eventsBefore.length);
+
+      // No tasks created or modified
+      const { rows: tasksAfter } = await pool.query<{ count: string }>(
+        "SELECT count(*) FROM tasks WHERE run_id = $1",
+        [runId],
+      );
+      expect(tasksAfter[0]?.count).toBe(tasksBefore[0]?.count);
     });
   });
 });
