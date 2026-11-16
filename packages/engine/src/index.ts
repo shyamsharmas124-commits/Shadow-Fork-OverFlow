@@ -16,6 +16,7 @@ export {
   redactPayload,
   redactStringValue,
   redactUrl,
+  SECRET_FIELD_ALLOWLIST,
   ShadowHttpConnector,
   ShadowSqlConnector,
   type SqlConnector,

@@ -155,7 +155,9 @@ export class RunContext implements Ctx {
       if (
         recorded.type === "EffectCaptured" ||
         recorded.type === "TimeRecorded" ||
-        recorded.type === "RandomRecorded"
+        recorded.type === "RandomRecorded" ||
+        recorded.type === "RunResumed" ||
+        recorded.type === "RunFailed"
       ) {
         this.cursor++;
         continue;
@@ -186,11 +188,14 @@ export class RunContext implements Ctx {
                 (e.type === "StepCompleted" || e.type === "StepFailed") && e.payload.name === name,
             );
           const isRunFailedNext = this.history[this.cursor + 1]?.type === "RunFailed";
+          const hasRunResumedLater = this.history
+            .slice(this.cursor)
+            .some((e) => e.type === "RunResumed");
 
           failedAttempts++;
           this.cursor++;
 
-          if (!hasMoreEventsForThisStep && isRunFailedNext) {
+          if (!hasMoreEventsForThisStep && isRunFailedNext && !hasRunResumedLater) {
             throw new StepFailedError(name, recorded.payload.error);
           }
 

@@ -35,6 +35,10 @@ export function redactApiOutput<T>(data: T): T {
     return data;
   }
 
+  if (data instanceof Date) {
+    return data.toISOString() as unknown as T;
+  }
+
   if (typeof data === "string") {
     // If it's a JSON string, parse, recursively redact, and re-stringify
     try {

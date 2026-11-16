@@ -11,6 +11,7 @@ import {
   type ForkOptions,
   loadEvents,
   RunContext,
+  redactApiOutput,
   redactHeaders,
   redactPayload,
   redactStringValue,
@@ -1784,6 +1785,52 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(redacted["x-idempotency-key"]).toBe("custom-uuid-key");
       expect(redacted.authorization).toBe("[REDACTED]");
       expect(redacted.api_key).toBe("[REDACTED]");
+    });
+
+    it("redactApiOutput preserves Date instances as ISO strings and handles null/undefined", () => {
+      const now = new Date("2026-11-16T12:00:00.000Z");
+      const input = {
+        createdAt: now,
+        startedAt: new Date("2026-11-16T12:00:01.000Z"),
+        completedAt: null,
+        error: undefined,
+        nested: {
+          timestamp: new Date("2026-11-16T12:00:02.000Z"),
+        },
+      };
+
+      const output = redactApiOutput(input);
+      expect(output.createdAt).toBe("2026-11-16T12:00:00.000Z");
+      expect(output.startedAt).toBe("2026-11-16T12:00:01.000Z");
+      expect(output.completedAt).toBeNull();
+      expect(output.error).toBeUndefined();
+      expect(output.nested.timestamp).toBe("2026-11-16T12:00:02.000Z");
+    });
+
+    it("allowlist preserves non-secret field names (step_key, stepKey, idempotencyKey) while apiKey, secret, token, password stay redacted", () => {
+      const sample = {
+        step_key: "step-calculate-tax",
+        stepKey: "step-execute-transfer",
+        idempotencyKey: "idem-uuid-9999",
+        "Idempotency-Key": "idem-header-8888",
+        apiKey: "sk-planted-api-key-1234567890",
+        secret: "super-secret-value",
+        token: "bearer-token-value",
+        password: "secret-password",
+      };
+
+      const output = redactApiOutput(sample);
+      // Non-secret field names show through unredacted
+      expect(output.step_key).toBe("step-calculate-tax");
+      expect(output.stepKey).toBe("step-execute-transfer");
+      expect(output.idempotencyKey).toBe("idem-uuid-9999");
+      expect(output["Idempotency-Key"]).toBe("idem-header-8888");
+
+      // Secrets stay strictly redacted
+      expect(output.apiKey).toBe("[REDACTED]");
+      expect(output.secret).toBe("[REDACTED]");
+      expect(output.token).toBe("[REDACTED]");
+      expect(output.password).toBe("[REDACTED]");
     });
   });
 });

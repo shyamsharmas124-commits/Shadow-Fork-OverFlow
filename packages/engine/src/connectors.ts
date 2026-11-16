@@ -46,7 +46,10 @@ export function redactStringValue(val: string): string {
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED_KEY]");
 }
 
-const SECRET_FIELD_ALLOWLIST = new Set([
+export const SECRET_FIELD_ALLOWLIST = new Set([
+  "step_key",
+  "stepkey",
+  "step-key",
   "idempotency-key",
   "idempotency_key",
   "idempotencykey",

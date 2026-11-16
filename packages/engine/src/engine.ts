@@ -124,11 +124,28 @@ export class Engine {
       return { status: "failed", error: last.payload.error };
 
     if (options.resumeFailed && run.status === "failed") {
-      await this.pool.query(`UPDATE runs SET status = 'running' WHERE id = $1`, [runId]);
-      await this.pool.query(
-        `UPDATE tasks SET status = 'pending', run_at = $2, lease_owner = NULL, lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
-        [runId, (options.clock ?? this.clock).now()],
-      );
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await appendEvent(client, runId, {
+          type: "RunResumed",
+          payload: {
+            fromSeq: last?.seq ?? 0,
+            resumedAt: (options.clock ?? this.clock).now().toISOString(),
+          },
+        });
+        await client.query(`UPDATE runs SET status = 'running' WHERE id = $1`, [runId]);
+        await client.query(
+          `UPDATE tasks SET status = 'pending', attempt = 0, run_at = $2, lease_owner = NULL, lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
+          [runId, (options.clock ?? this.clock).now()],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
     }
 
     const fn = this.workflows[run.workflow_type as string];
@@ -139,9 +156,8 @@ export class Engine {
       parentEvents = await loadEvents(this.pool, run.parent_run_id);
     }
 
-    const history = events.filter(
-      (e) => e.type !== "RunStarted" && (!options.resumeFailed || e.type !== "RunFailed"),
-    );
+    const currentEvents = await loadEvents(this.pool, runId);
+    const history = currentEvents.filter((e) => e.type !== "RunStarted");
     const clock = options.clock ?? this.clock;
     const ctx = new RunContext(this.pool, runId, history, {
       ...options,

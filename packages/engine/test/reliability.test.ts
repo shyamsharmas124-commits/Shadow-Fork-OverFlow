@@ -626,4 +626,108 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     const allPayloads = JSON.stringify(events.map((e) => e.payload));
     expect(allPayloads).not.toContain("rogue-late-result");
   });
+
+  it("resumes a failed run after maxAttempts exhausted: earlier steps do not re-run, failed step retries live, and events are purely append-only", async () => {
+    let step1Calls = 0;
+    let step2Calls = 0;
+    let shouldFailStep2 = true;
+    const wfType = `failed_resume_${randomUUID().slice(0, 8)}`;
+
+    const engine = new Engine(pool, {
+      [wfType]: async (ctx: Ctx) => {
+        const r1 = await ctx.step(
+          "step-one",
+          () => {
+            step1Calls++;
+            return "step-1-done";
+          },
+          {},
+        );
+
+        const r2 = await ctx.step(
+          "step-two",
+          () => {
+            step2Calls++;
+            if (shouldFailStep2) {
+              throw new Error("Step 2 exhausted failure");
+            }
+            return "step-2-succeeded";
+          },
+          {},
+          { maxAttempts: 1 },
+        );
+
+        return { r1, r2 };
+      },
+    });
+
+    // 1. Initial run: step 1 succeeds, step 2 fails and exhausts maxAttempts (1)
+    const runId = await engine.startRun(wfType, {});
+    const initialOutcome = await engine.execute(runId);
+    expect(initialOutcome.status).toBe("failed");
+    expect(step1Calls).toBe(1);
+    expect(step2Calls).toBe(1);
+
+    // Verify initial event sequence: RunStarted -> StepCompleted -> StepFailed -> RunFailed
+    const initialEvents = await loadEvents(pool, runId);
+    expect(initialEvents.map((e) => e.type)).toEqual([
+      "RunStarted",
+      "StepCompleted",
+      "StepFailed",
+      "RunFailed",
+    ]);
+
+    // 2. Fix the transient root cause for step 2
+    shouldFailStep2 = false;
+
+    // 3. Resume the failed run with fresh attempt budget
+    const resumeOutcome = await engine.execute(runId, { resumeFailed: true });
+    expect(resumeOutcome.status).toBe("completed");
+    if (resumeOutcome.status === "completed") {
+      expect(resumeOutcome.result).toEqual({
+        r1: "step-1-done",
+        r2: "step-2-succeeded",
+      });
+    }
+
+    // 4. Assert invariants:
+    // (a) Earlier completed step 1 was NOT re-executed
+    expect(step1Calls).toBe(1);
+
+    // (b) Failed step 2 ran again live
+    expect(step2Calls).toBe(2);
+
+    // (c) Events table: strictly append-only, NO events deleted or edited
+    const finalEvents = await loadEvents(pool, runId);
+    const eventTypes = finalEvents.map((e) => e.type);
+    expect(eventTypes).toEqual([
+      "RunStarted",
+      "StepCompleted",
+      "StepFailed",
+      "RunFailed",
+      "RunResumed",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+
+    // Verify sequences are strictly contiguous 1..7 with no gaps or modifications
+    expect(finalEvents.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+
+    // Verify RunResumed payload points back to the failed event sequence
+    const resumedEvent = finalEvents.find((e) => e.type === "RunResumed");
+    expect(resumedEvent).toBeDefined();
+    expect((resumedEvent!.payload as { fromSeq: number }).fromSeq).toBe(4);
+
+    // (d) Task state in tasks table: both steps have tasks, all completed
+    const { rows: taskRows } = await pool.query<{
+      step_key: string;
+      status: string;
+      attempt: number;
+    }>("SELECT step_key, status, attempt FROM tasks WHERE run_id = $1 ORDER BY id ASC", [runId]);
+    expect(taskRows.length).toBe(2);
+    expect(taskRows.every((t) => t.status === "completed")).toBe(true);
+
+    // Clean up
+    await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+  });
 });

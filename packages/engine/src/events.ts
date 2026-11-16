@@ -43,6 +43,10 @@ export const EventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("RunCompleted"), payload: z.object({ result: z.unknown() }) }),
   z.object({ type: z.literal("RunFailed"), payload: z.object({ error: z.string() }) }),
+  z.object({
+    type: z.literal("RunResumed"),
+    payload: z.object({ fromSeq: z.number(), resumedAt: z.string().optional() }),
+  }),
 ]);
 
 export type EventData = z.infer<typeof EventSchema>;
