@@ -948,4 +948,135 @@ describe("Milestone 4b - Shadow Mode", () => {
     expect(effect2.reusedFromParent).toBe(true);
     expect(effect2.inputChangedFromParent).toBe(false); // input identical to parent!
   });
+
+  describe("M4d Item 2 - Shadow SQL transaction escape & client destruction", () => {
+    it.each([
+      { name: "COMMIT", query: "COMMIT", expectedError: /transaction control \(COMMIT\)/i },
+      { name: "END", query: "END", expectedError: /transaction control \(END\)/i },
+      {
+        name: "/* x */ COMMIT",
+        query: "/* x */ COMMIT",
+        expectedError: /transaction control \(COMMIT\)/i,
+      },
+      {
+        name: "UPDATE ...; COMMIT",
+        query: "UPDATE shadow_accounts SET balance = 999; COMMIT",
+        expectedError: /multi-statement queries are forbidden/i,
+      },
+      {
+        name: "SET search_path = x",
+        query: "SET search_path = evil_schema",
+        expectedError: /session-level SET is forbidden/i,
+      },
+      {
+        name: "SELECT pg_advisory_lock(1)",
+        query: "SELECT pg_advisory_lock(1)",
+        expectedError: /session-level advisory locks are forbidden/i,
+      },
+    ])(
+      "rejects $name, leaves target rows unchanged, and surfaces clear error",
+      async ({ query, expectedError }) => {
+        const accountId = randomUUID();
+        await pool.query("INSERT INTO shadow_accounts (id, name, balance) VALUES ($1, $2, $3)", [
+          accountId,
+          "victim",
+          500,
+        ]);
+
+        const wf = `wf_sql_escape_${randomUUID().slice(0, 8)}`;
+        let isFork = false;
+        const engine = new Engine(pool, {
+          [wf]: async (ctx: Ctx) => {
+            await ctx.step("step-init", () => "ready", {}, { kind: "pure" });
+            return await ctx.step(
+              "step-sql",
+              async (_inp, sctx: StepContext) => {
+                if (!isFork) {
+                  await sctx.sql.query("SELECT 1");
+                  return { ok: true };
+                }
+                // In fork: execute the escaping query
+                await sctx.sql.query(query);
+                return { ok: true };
+              },
+              {},
+              { kind: "effectful-reversible", maxAttempts: 1, mock: { ok: true } },
+            );
+          },
+        });
+
+        const parentId = await engine.startRun(wf, {});
+        const parentOutcome = await engine.execute(parentId);
+        expect(parentOutcome.status).toBe("completed");
+
+        // Balance before fork is 500
+        const beforeCheck = await pool.query<{ balance: number }>(
+          "SELECT balance FROM shadow_accounts WHERE id = $1",
+          [accountId],
+        );
+        expect(beforeCheck.rows[0]!.balance).toBe(500);
+
+        isFork = true;
+        const forkId = await engine.fork(parentId, 2, { input: {} });
+        const forkOutcome = await engine.execute(forkId);
+        expect(forkOutcome.status).toBe("failed");
+        if (forkOutcome.status === "failed") {
+          expect(forkOutcome.error).toMatch(expectedError);
+        }
+
+        // Assert target rows are unchanged
+        const afterCheck = await pool.query<{ balance: number }>(
+          "SELECT balance FROM shadow_accounts WHERE id = $1",
+          [accountId],
+        );
+        expect(afterCheck.rows[0]!.balance).toBe(500);
+
+        // Clean up test tasks & accounts
+        await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+        await pool.query("DELETE FROM shadow_accounts WHERE id = $1", [accountId]);
+      },
+    );
+
+    it("destroys client via release(true): advisory locks and session SET do not leak to next pool user", async () => {
+      // Create a dedicated pool to isolate pool client recycling
+      const tinyPool = await makePool();
+      const connector = new ShadowSqlConnector(tinyPool);
+
+      // Force connector to obtain a client and run session operations
+      const client = await (
+        connector as unknown as { getClient(): Promise<pg.PoolClient> }
+      ).getClient();
+      const lockKey = 98765432;
+      await client.query(`SELECT pg_advisory_lock(${lockKey})`);
+      await client.query("SET search_path = pg_catalog, public");
+
+      // Verify the advisory lock is currently held by this client's processID
+      const initialLock = await tinyPool.query(
+        "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND (objid = $1 OR (classid::bigint << 32) + objid::bigint = $1)",
+        [lockKey],
+      );
+      expect(initialLock.rows.length).toBeGreaterThan(0);
+
+      // Cleanup connector (must call client.release(true))
+      await connector.cleanup();
+
+      // Check from a new connection from the pool
+      const client2 = await tinyPool.connect();
+      try {
+        // 1. Session advisory lock must be gone
+        const afterLock = await client2.query(
+          "SELECT * FROM pg_locks WHERE locktype = 'advisory' AND (objid = $1 OR (classid::bigint << 32) + objid::bigint = $1)",
+          [lockKey],
+        );
+        expect(afterLock.rows.length).toBe(0);
+
+        // 2. Plain SET must not leak: search_path must be default, not modified
+        const searchPathRes = await client2.query<{ search_path: string }>("SHOW search_path");
+        expect(searchPathRes.rows[0]!.search_path).not.toBe("pg_catalog, public");
+      } finally {
+        client2.release(true);
+        await tinyPool.end();
+      }
+    });
+  });
 });

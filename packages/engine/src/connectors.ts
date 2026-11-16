@@ -33,6 +33,19 @@ export interface CapturedEffect {
 }
 
 /**
+ * Best-effort redaction of sensitive patterns within string values:
+ * Bearer tokens, JWT tokens, and common API key prefixes (sk-, ghp_, AKIA).
+ */
+export function redactStringValue(val: string): string {
+  return val
+    .replace(/\bBearer\s+[a-zA-Z0-9_\-\.~+/]+=*/gi, "Bearer [REDACTED]")
+    .replace(/\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, "[REDACTED_JWT]")
+    .replace(/\bsk-[a-zA-Z0-9_-]{20,}\b/g, "[REDACTED_KEY]")
+    .replace(/\bghp_[a-zA-Z0-9]{30,}\b/g, "[REDACTED_KEY]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED_KEY]");
+}
+
+/**
  * Checks if a header, query param, or payload field name is sensitive and must be redacted.
  */
 export function isSecretFieldName(name: string): boolean {
@@ -59,34 +72,51 @@ export function redactHeaders(headers: Record<string, string> = {}): Record<stri
     if (isSecretFieldName(key)) {
       redacted[key] = "[REDACTED]";
     } else {
-      redacted[key] = value;
+      redacted[key] = redactStringValue(value);
     }
   }
   return redacted;
 }
 
 /**
- * Redacts sensitive query parameters from URLs.
+ * Redacts sensitive query parameters and userinfo from URLs.
+ * Fails closed: if URL parsing or decoding fails, redacts the entire query string or URL.
  */
 export function redactUrl(urlStr: string): string {
   try {
     const isRelative = !urlStr.startsWith("http://") && !urlStr.startsWith("https://");
     const parsed = new URL(urlStr, "http://localhost");
-    let changed = false;
+
+    // Redact userinfo if present
+    if (parsed.username) parsed.username = "[REDACTED]";
+    if (parsed.password) parsed.password = "[REDACTED]";
+
+    // Test decoding to detect malformed percent-encoding
+    decodeURIComponent(parsed.search);
+
     for (const key of Array.from(parsed.searchParams.keys())) {
       if (isSecretFieldName(key)) {
         parsed.searchParams.set(key, "[REDACTED]");
-        changed = true;
+      } else {
+        const val = parsed.searchParams.get(key);
+        if (val) {
+          parsed.searchParams.set(key, redactStringValue(val));
+        }
       }
     }
-    if (!changed) return urlStr;
+
     const formatted = parsed.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
     if (isRelative) {
       return formatted.replace("http://localhost", "");
     }
     return formatted;
   } catch {
-    return urlStr;
+    // Fails closed: if parsing or decoding fails, redact query string or whole URL
+    const qIdx = urlStr.indexOf("?");
+    if (qIdx !== -1) {
+      return `${urlStr.slice(0, qIdx)}?[REDACTED]`;
+    }
+    return "[REDACTED_URL]";
   }
 }
 
@@ -106,22 +136,32 @@ export function redactPayload(body: unknown): unknown {
       if (body.includes("=") && !body.includes("\n")) {
         try {
           const params = new URLSearchParams(body);
+          decodeURIComponent(body);
           let changed = false;
           for (const key of Array.from(params.keys())) {
             if (isSecretFieldName(key)) {
               params.set(key, "[REDACTED]");
               changed = true;
+            } else {
+              const val = params.get(key);
+              if (val) {
+                const redactedVal = redactStringValue(val);
+                if (redactedVal !== val) {
+                  params.set(key, redactedVal);
+                  changed = true;
+                }
+              }
             }
           }
           if (changed) {
             return params.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
           }
         } catch {
-          // Keep as string
+          // Fall through to redactStringValue
         }
       }
     }
-    return body;
+    return redactStringValue(body);
   }
 
   if (Array.isArray(body)) {
@@ -229,8 +269,141 @@ export class LiveSqlConnector implements SqlConnector {
   }
 }
 
-const NON_TRANSACTIONAL_SQL_REGEX =
-  /^\s*(VACUUM|CREATE\s+INDEX\s+CONCURRENTLY|DROP\s+INDEX\s+CONCURRENTLY|REINDEX\s+CONCURRENTLY|DISCARD\s+ALL)/i;
+/**
+ * Strips comments (-- and /* *\/) and string literals ('...' and $$...$$) from SQL.
+ */
+export function stripSqlCommentsAndStrings(sql: string): string {
+  let out = "";
+  let i = 0;
+  const len = sql.length;
+
+  while (i < len) {
+    if (sql[i] === "-" && sql[i + 1] === "-") {
+      i += 2;
+      while (i < len && sql[i] !== "\n" && sql[i] !== "\r") {
+        i++;
+      }
+      out += " ";
+      continue;
+    }
+    if (sql[i] === "/" && sql[i + 1] === "*") {
+      i += 2;
+      let depth = 1;
+      while (i < len && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth++;
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth--;
+          i += 2;
+        } else {
+          i++;
+        }
+      }
+      out += " ";
+      continue;
+    }
+    if (sql[i] === "'") {
+      i++;
+      while (i < len) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") {
+            i += 2;
+          } else {
+            i++;
+            break;
+          }
+        } else if (sql[i] === "\\") {
+          i += 2;
+        } else {
+          i++;
+        }
+      }
+      out += " ";
+      continue;
+    }
+    if (sql[i] === "$") {
+      const match = sql.slice(i).match(/^\$([a-zA-Z0-9_]*)\$/);
+      if (match) {
+        const tag = match[0];
+        const endIdx = sql.indexOf(tag, i + tag.length);
+        if (endIdx !== -1) {
+          i = endIdx + tag.length;
+          out += " ";
+          continue;
+        }
+      }
+    }
+    out += sql[i];
+    i++;
+  }
+  return out;
+}
+
+export function validateShadowSql(sql: string): void {
+  const stripped = stripSqlCommentsAndStrings(sql);
+  const trimmed = stripped.trim().replace(/;+\s*$/, "");
+
+  if (trimmed.includes(";")) {
+    throw new Error("Shadow SQL error: multi-statement queries are forbidden in shadow mode.");
+  }
+
+  if (/\b(?:BEGIN|START\s+TRANSACTION)\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: transaction control (BEGIN) is forbidden in shadow mode.");
+  }
+  if (/\bCOMMIT\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: transaction control (COMMIT) is forbidden in shadow mode.");
+  }
+
+  const caseMatches = stripped.match(/\bCASE\b/gi) ?? [];
+  const endMatches = stripped.match(/\bEND\b/gi) ?? [];
+  if (endMatches.length > caseMatches.length) {
+    throw new Error("Shadow SQL error: transaction control (END) is forbidden in shadow mode.");
+  }
+
+  if (/\bROLLBACK\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: transaction control (ROLLBACK) is forbidden in shadow mode.");
+  }
+  if (/\bSAVEPOINT\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: savepoints are forbidden in shadow mode.");
+  }
+  if (/\bRELEASE\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: transaction control (RELEASE) is forbidden in shadow mode.");
+  }
+  if (/^SET\s+(?:SESSION\s+)?(?!LOCAL\b)/i.test(trimmed)) {
+    throw new Error("Shadow SQL error: session-level SET is forbidden in shadow mode (use SET LOCAL).");
+  }
+  if (/\bRESET\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: RESET is forbidden in shadow mode.");
+  }
+  if (/\bDISCARD\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: DISCARD is forbidden in shadow mode.");
+  }
+  if (/\bLISTEN\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: LISTEN is forbidden in shadow mode.");
+  }
+  if (/\bUNLISTEN\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: UNLISTEN is forbidden in shadow mode.");
+  }
+  if (/\bCOPY\b[\s\S]*\bPROGRAM\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: COPY PROGRAM is forbidden in shadow mode.");
+  }
+  if (/\bCALL\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: CALL is forbidden in shadow mode.");
+  }
+  if (/\bVACUUM\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: statement 'VACUUM' cannot run inside a transaction and cannot be rolled back.");
+  }
+  if (/\bCONCURRENTLY\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: CONCURRENTLY operations are forbidden in shadow mode.");
+  }
+  if (/\bREINDEX\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: REINDEX is forbidden in shadow mode.");
+  }
+  if (/\bpg_(?:try_)?advisory_lock\b/i.test(stripped)) {
+    throw new Error("Shadow SQL error: session-level advisory locks are forbidden in shadow mode.");
+  }
+}
 
 export class ShadowSqlConnector implements SqlConnector {
   public callCount = 0;
@@ -258,11 +431,7 @@ export class ShadowSqlConnector implements SqlConnector {
    */
   async query(sql: string, params?: unknown[]): Promise<SqlResult> {
     this.callCount++;
-    if (NON_TRANSACTIONAL_SQL_REGEX.test(sql.trim())) {
-      throw new Error(
-        `Shadow SQL error: statement '${sql.trim().slice(0, 30)}...' cannot run inside a transaction and cannot be rolled back.`,
-      );
-    }
+    validateShadowSql(sql);
     const client = await this.getClient();
     const res = await client.query(sql, params);
     const rowCount = res.rowCount ?? 0;
@@ -277,6 +446,7 @@ export class ShadowSqlConnector implements SqlConnector {
 
   /**
    * ROLLBACK must run in a finally block, including on error, timeout and abort.
+   * Destroy the client (release(true)) instead of returning it to the pool so no session state leaks.
    */
   async cleanup(): Promise<void> {
     if (this.client) {
@@ -285,7 +455,7 @@ export class ShadowSqlConnector implements SqlConnector {
       } catch {
         // Safe ignore
       } finally {
-        this.client.release();
+        this.client.release(true);
         this.client = null;
       }
     }
