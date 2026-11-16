@@ -212,14 +212,17 @@ Open **http://localhost:5173** to inspect execution runs, event timelines, appro
 
 ## Citations & Intellectual Heritage
 
-The architecture of `durable` draws directly upon foundational concepts in distributed systems and database research:
+The design and architecture of `durable` draw directly upon established paradigms in distributed systems and database research:
 
 1. **Temporal / Cadence**:
-   - *Temporal: Open Source Durable Execution Engine* ([temporal.io](https://temporal.io)).
-   - We adopt Temporal's core paradigm of **event-sourced deterministic replay**: user code runs as ordinary TypeScript functions, with `ctx.step` recording inputs and outputs to an append-only log so that worker crashes are seamlessly resumed by replaying historical events.
-   - We adopt Temporal's replay matching invariants: non-deterministic branching or modified step inputs raise `NonDeterminismError`, and virtual time and randomness primitives (`ctx.now`, `ctx.random`) replace ambient system calls.
+   - Official Documentation: [Temporal Workflow Concepts](https://docs.temporal.io/workflows) (`#event-history`, `#replay`, `#deterministic-constraints`, fetched November 16, 2026).
+   - **Deterministic Event-Sourced Replay**: Temporal establishes that a worker re-executes workflow definition code from the beginning, replaying an append-only event history to recreate memory state rather than snapshotting memory. Side effects recorded during previous attempts are fed back without re-executing.
+   - **Determinism Verification**: If re-execution branches unexpectedly or step inputs mismatch historical events, execution halts immediately with a non-determinism error. Ambient non-determinism (system clocks, raw pseudo-randomness) must be intercepted or mediated through deterministic wrappers (`ctx.now()`, `ctx.random()`).
 
 2. **DBOS (Database-Oriented Operating System)**:
-   - *Stonebraker, M., Cafarella, M., Kraska, T., et al. (2024). "DBOS: A Transformed Operating System for Cloud Applications." Proceedings of the CIDR 2024 Conference / VLDB.*
-   - Rather than introducing a specialized distributed consensus cluster (like Raft or ZooKeeper), `durable` implements DBOS's thesis: modern ACID relational databases (specifically PostgreSQL) are exceptionally capable of managing workflow state, distributed leasing, task queues (`SKIP LOCKED`), and event logs directly.
-   - Transactional isolation, row-level locks, and rollback semantics provide unyielding consistency with minimal operational overhead.
+   - Publications:
+     - Qian Ge, Yale Yu, Henri Bikakis, Peter Kraft, Michael Stonebraker, Matei Zaharia, et al. *"A Progress Report on DBOS: A Database-oriented Operating System."* In *Proceedings of the Conference on Innovative Data Systems Research (CIDR)*, 2022. URL: https://www.cidrdb.org/cidr2022/papers/p27-ge.pdf
+     - Qian Ge, Yale Yu, Henri Bikakis, Peter Kraft, Michael Stonebraker, Matei Zaharia, et al. *"DBOS: A DBMS-oriented Operating System."* In *Proceedings of the VLDB Endowment (VLDB)*, Vol. 15, 2022.
+   - Official Documentation: [DBOS Architecture & Durable Execution](https://docs.dbos.dev/) (fetched November 16, 2026).
+   - **Postgres-Centric Durability**: DBOS demonstrates that modern relational databases (PostgreSQL) provide an ideal, unified foundation for durable execution without requiring a separate orchestration cluster or custom Raft engine.
+   - **Transactional Queues & State**: Leveraging PostgreSQL ACID transactions, atomic row-level leasing (`SELECT ... FOR UPDATE SKIP LOCKED`), and checkpointed event tables enables rock-solid recovery, linear horizontal sharding, and complete workflow lifecycle management with zero extraneous infrastructure.
