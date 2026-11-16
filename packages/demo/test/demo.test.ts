@@ -99,10 +99,11 @@ Total: $1,500.00
     const events = await engine.getEvents(runId);
     const approvalReq = events.find((e) => e.type === "ApprovalRequested");
     expect(approvalReq).toBeDefined();
-    expect((approvalReq!.payload as any).name).toBe("invoice-manager-approval");
+    expect((approvalReq!.payload as { name: string }).name).toBe("invoice-manager-approval");
 
     const extractEvent = events.find(
-      (e) => e.type === "StepCompleted" && (e.payload as any).name === "extract-invoice",
+      (e) =>
+        e.type === "StepCompleted" && (e.payload as { name: string }).name === "extract-invoice",
     );
     expect(extractEvent).toBeDefined();
 
@@ -141,7 +142,7 @@ Total: $1,500.00
 
     const completedFork = await engine.getRun(forkId);
     expect(completedFork?.status).toBe("completed");
-    expect((completedFork!.result as any).invoice.amount).toBe(750);
+    expect((completedFork!.result as { invoice: { amount: number } }).invoice.amount).toBe(750);
 
     // Assert that shadow fork produced 0 external charges and 0 external notifications
     expect(mocks.stats.charges.length).toBe(chargesBeforeFork);
@@ -165,7 +166,9 @@ Total: $1,500.00
 
     const completedParent = await engine.getRun(runId);
     expect(completedParent?.status).toBe("completed");
-    expect((completedParent!.result as any).payment.status).toBe("succeeded");
+    expect((completedParent!.result as { payment: { status: string } }).payment.status).toBe(
+      "succeeded",
+    );
 
     // Assert that live run produced exactly 1 real charge and 1 real notification
     expect(mocks.stats.charges.length).toBe(chargesBeforeFork + 1);
