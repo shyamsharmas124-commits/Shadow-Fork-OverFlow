@@ -26,6 +26,7 @@ export {
   ShadowSqlConnector,
   type SqlConnector,
   type SqlResult,
+  validateShadowSql,
 } from "./connectors.js";
 export {
   type Ctx,

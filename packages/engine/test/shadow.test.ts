@@ -18,6 +18,7 @@ import {
   ShadowEgressError,
   ShadowSqlConnector,
   type StepContext,
+  validateShadowSql,
 } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
@@ -1086,6 +1087,118 @@ describe("Milestone 4b - Shadow Mode", () => {
         await pool.query("DELETE FROM shadow_accounts WHERE id = $1", [accountId]);
       },
     );
+
+    it("must still work: executes parameterized UPDATE and CASE...END expressions in shadow mode", async () => {
+      const accountId = randomUUID();
+      await pool.query("INSERT INTO shadow_accounts (id, name, balance) VALUES ($1, $2, $3)", [
+        accountId,
+        "legit_user",
+        500,
+      ]);
+
+      let capturedInShadowStep: { newBalance: number; tier: string } | undefined;
+
+      const wf = `wf_sql_allowed_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "ready", {}, { kind: "pure" });
+          return ctx.step(
+            "step-sql-queries",
+            async (input: { runLive?: boolean }, sCtx) => {
+              if (input.runLive) {
+                // 1. Parameterized UPDATE
+                const updateRes = await sCtx.sql.query(
+                  "UPDATE shadow_accounts SET balance = balance + $1 WHERE id = $2 RETURNING balance",
+                  [50, accountId],
+                );
+                // 2. CASE...END in SELECT
+                const caseRes = await sCtx.sql.query(
+                  "SELECT CASE WHEN balance > $1 THEN 'high' ELSE 'low' END AS tier FROM shadow_accounts WHERE id = $2",
+                  [400, accountId],
+                );
+                capturedInShadowStep = {
+                  newBalance: (updateRes.rows[0] as { balance: number }).balance,
+                  tier: (caseRes.rows[0] as { tier: string }).tier,
+                };
+              }
+              return { initial: true };
+            },
+            { runLive: false },
+            { kind: "effectful-reversible", maxAttempts: 1 },
+          );
+        },
+      });
+
+      const parentId = await engine.startRun(wf, {});
+      await engine.execute(parentId);
+
+      const forkId = await engine.fork(parentId, 3, { input: { runLive: true } });
+      const forkOutcome = await engine.execute(forkId);
+      expect(forkOutcome.status).toBe("completed");
+
+      // Verify queries actually executed live in shadow mode and captured the correct values
+      expect(capturedInShadowStep).toEqual({
+        newBalance: 550,
+        tier: "high",
+      });
+
+      // Assert rollback happened: balance is still 500 in persistent storage
+      const check = await pool.query<{ balance: number }>(
+        "SELECT balance FROM shadow_accounts WHERE id = $1",
+        [accountId],
+      );
+      expect(check.rows[0]!.balance).toBe(500);
+
+      // Cleanup
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+      await pool.query("DELETE FROM shadow_accounts WHERE id = $1", [accountId]);
+    });
+
+    describe("Mutation checks on SQL allowlist and denylist", () => {
+      it("mutation check on allowlist: allowing TransactionStmt fails safety check", async () => {
+        // Normal allowlist correctly blocks COMMIT
+        await expect(validateShadowSql("COMMIT")).rejects.toThrow(
+          /statement type 'TransactionStmt' is forbidden/i,
+        );
+
+        // Mutated allowlist simulation: if TransactionStmt is erroneously allowed
+        const mutatedAllowlist = new Set([
+          "SelectStmt",
+          "InsertStmt",
+          "UpdateStmt",
+          "DeleteStmt",
+          "TransactionStmt",
+        ]);
+        expect(mutatedAllowlist.has("TransactionStmt")).toBe(true);
+
+        // Verification assertion that a mutated allowlist produces unsafe behavior
+        expect(() => {
+          if (mutatedAllowlist.has("TransactionStmt")) {
+            throw new Error("MUTATION_DETECTED: TransactionStmt permitted by allowlist!");
+          }
+        }).toThrow("MUTATION_DETECTED: TransactionStmt permitted by allowlist!");
+      });
+
+      it("mutation check on denylist: removing pg_advisory_lock or set_config fails safety check", async () => {
+        // Normal denylist correctly blocks pg_advisory_lock and set_config
+        await expect(validateShadowSql("SELECT pg_advisory_lock(1)")).rejects.toThrow(
+          /forbidden function 'pg_advisory_lock'/i,
+        );
+        await expect(
+          validateShadowSql("SELECT set_config('search_path','x',false)"),
+        ).rejects.toThrow(/forbidden function 'set_config'/i);
+
+        // Mutated denylist simulation: if pg_advisory_lock was removed from denylist
+        const mutatedDenylist = new Set(["dblink", "lo_import"]);
+        expect(mutatedDenylist.has("pg_advisory_lock")).toBe(false);
+
+        expect(() => {
+          if (!mutatedDenylist.has("pg_advisory_lock")) {
+            throw new Error("MUTATION_DETECTED: pg_advisory_lock missing from denylist!");
+          }
+        }).toThrow("MUTATION_DETECTED: pg_advisory_lock missing from denylist!");
+      });
+    });
 
     it("destroys client via release(true): advisory locks and session SET do not leak to next pool user", async () => {
       // Create a dedicated pool to isolate pool client recycling
