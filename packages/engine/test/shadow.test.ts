@@ -9,6 +9,10 @@ import {
   type ForkOptions,
   loadEvents,
   RunContext,
+  redactHeaders,
+  redactPayload,
+  redactStringValue,
+  redactUrl,
   ShadowEgressError,
   ShadowSqlConnector,
   type StepContext,
@@ -1255,6 +1259,122 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(innerEmitterBlocked).toBe(true);
       expect(preEmitterCaughtEgress).toBe(true);
       expect(preCallbackCaughtEgress).toBe(true);
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+  });
+
+  describe("M4d Item 4 - Redaction fails closed & value patterns", () => {
+    it("fails closed on malformed percent-encoding in URL query", () => {
+      const malformedUrl = "https://api.example.com/v1/resource?secret=%E0%A4%A&token=123";
+      const redacted = redactUrl(malformedUrl);
+      expect(redacted).toBe("https://api.example.com/v1/resource?[REDACTED]");
+      expect(redacted).not.toContain("%E0%A4%A");
+      expect(redacted).not.toContain("123");
+    });
+
+    it("redacts userinfo credentials from URL", () => {
+      const urlWithCreds = "https://admin:super_secret_pw@service.internal/path?tag=public";
+      const redacted = redactUrl(urlWithCreds);
+      expect(redacted).toBe("https://[REDACTED]:[REDACTED]@service.internal/path?tag=public");
+      expect(redacted).not.toContain("admin");
+      expect(redacted).not.toContain("super_secret_pw");
+    });
+
+    it("redacts value-shape secrets in headers, query, path, and body", () => {
+      expect(redactStringValue("bearer-token: sk-abcdef123456789012345678")).toBe(
+        "bearer-token: [REDACTED_KEY]",
+      );
+      const jwtToken =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0.4SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5";
+      const openaiKey = "sk-abcdef123456789012345678";
+      const githubKey = "ghp_123456789012345678901234567890";
+      const awsKey = "AKIAIOSFODNN7EXAMPLE";
+
+      // 1. Headers (with non-sensitive field names)
+      const headers = redactHeaders({
+        "x-custom-jwt": jwtToken,
+        "x-trace-id": `User session with ${openaiKey}`,
+        "x-aws": awsKey,
+        "x-normal": "harmless-value",
+      });
+      expect(headers["x-custom-jwt"]).toBe("[REDACTED_JWT]");
+      expect(headers["x-trace-id"]).toBe("User session with [REDACTED_KEY]");
+      expect(headers["x-aws"]).toBe("[REDACTED_KEY]");
+      expect(headers["x-normal"]).toBe("harmless-value");
+
+      // 2. URL path & non-sensitive query parameter
+      const url = `https://api.example.com/users/${githubKey}?debug=${openaiKey}`;
+      const redactedUrl = redactUrl(url);
+      expect(redactedUrl).toBe("https://api.example.com/users/[REDACTED_KEY]?debug=[REDACTED_KEY]");
+      expect(redactedUrl).not.toContain(githubKey);
+      expect(redactedUrl).not.toContain(openaiKey);
+
+      // 3. JSON body with sensitive & non-sensitive keys
+      const jsonBody = {
+        password: "raw_password",
+        comment: `Contact support with Bearer ${openaiKey} or ${awsKey}`,
+        metadata: {
+          nestedToken: jwtToken,
+        },
+      };
+      const redactedJson = redactPayload(jsonBody) as Record<string, unknown>;
+      expect(redactedJson.password).toBe("[REDACTED]");
+      expect(redactedJson.comment).toBe("Contact support with Bearer [REDACTED] or [REDACTED_KEY]");
+      expect((redactedJson.metadata as Record<string, unknown>).nestedToken).toBe("[REDACTED]");
+
+      // 4. Form-encoded body
+      const formBody = `user=bob&note=sk-abcdef123456789012345678&secret=hidden`;
+      const redactedForm = redactPayload(formBody);
+      expect(redactedForm).toBe("user=bob&note=[REDACTED_KEY]&secret=[REDACTED]");
+    });
+
+    it("write-time redaction persists redacted effect in EffectCaptured event", async () => {
+      const wf = `wf_write_time_redact_${randomUUID().slice(0, 8)}`;
+      let isFork = false;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "ready", {}, { kind: "pure" });
+          return await ctx.step(
+            "step-http",
+            async (_inp, sctx: StepContext) => {
+              if (isFork) {
+                await sctx.http.fetch({
+                  url: "https://user:secret123@api.com/v1/query?token=xyz999&debug=sk-abcdef123456789012345678",
+                  headers: {
+                    authorization: "Bearer my-secret-token",
+                    "x-api-key": "AKIAIOSFODNN7EXAMPLE",
+                  },
+                  body: { secretField: "my-password", note: "ghp_123456789012345678901234567890" },
+                });
+              }
+              return { success: true };
+            },
+            {},
+            { kind: "effectful-external", maxAttempts: 1, mock: { success: true } },
+          );
+        },
+      });
+
+      const parentId = await engine.startRun(wf, {});
+      await engine.execute(parentId);
+
+      isFork = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      await engine.execute(forkId);
+
+      const events = await loadEvents(pool, forkId);
+      const effectEvt = events.find((e) => e.type === "EffectCaptured");
+      expect(effectEvt).toBeDefined();
+
+      const serialized = JSON.stringify(effectEvt!.payload);
+      expect(serialized).not.toContain("secret123");
+      expect(serialized).not.toContain("xyz999");
+      expect(serialized).not.toContain("sk-abcdef123456789012345678");
+      expect(serialized).not.toContain("my-secret-token");
+      expect(serialized).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(serialized).not.toContain("my-password");
+      expect(serialized).not.toContain("ghp_123456789012345678901234567890");
 
       await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
     });

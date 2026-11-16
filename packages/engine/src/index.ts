@@ -9,6 +9,7 @@ export {
   LiveSqlConnector,
   redactHeaders,
   redactPayload,
+  redactStringValue,
   redactUrl,
   ShadowHttpConnector,
   ShadowSqlConnector,

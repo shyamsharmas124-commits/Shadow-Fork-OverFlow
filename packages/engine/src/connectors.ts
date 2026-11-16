@@ -105,11 +105,11 @@ export function redactUrl(urlStr: string): string {
       }
     }
 
-    const formatted = parsed.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+    const formatted = parsed.toString().replace(/%5B(REDACTED[^%]*)%5D/g, "[$1]");
     if (isRelative) {
-      return formatted.replace("http://localhost", "");
+      return redactStringValue(formatted.replace("http://localhost", ""));
     }
-    return formatted;
+    return redactStringValue(formatted);
   } catch {
     // Fails closed: if parsing or decoding fails, redact query string or whole URL
     const qIdx = urlStr.indexOf("?");
@@ -154,7 +154,7 @@ export function redactPayload(body: unknown): unknown {
             }
           }
           if (changed) {
-            return params.toString().replace(/%5BREDACTED%5D/g, "[REDACTED]");
+            return params.toString().replace(/%5B(REDACTED[^%]*)%5D/g, "[$1]");
           }
         } catch {
           // Fall through to redactStringValue

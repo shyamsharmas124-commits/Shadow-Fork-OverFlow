@@ -40,3 +40,15 @@ Tests use `DATABASE_URL`. To use Testcontainers instead, replace `makePool()` in
     1. Direct socket connections via raw `node:net` or `node:dgram` sockets.
     2. Out-of-band third-party database clients or connection pools initialized outside the workflow engine context.
     3. Native compiled C/C++ addons or child processes spawned via `node:child_process` that perform independent networking.
+
+### Where Secrets Can Live & Redaction Timing
+
+All secret redaction in the engine is **write-time**: applied by connectors *before* effects and metadata are persisted to the append-only `events` table, preventing plaintext credentials from ever reaching database storage.
+
+| Location | Example Pattern | Redaction Strategy | Timing |
+|---|---|---|---|
+| **Headers** | `Authorization: Bearer ...`, `Cookie: ...` | Exact/substring key match (`[REDACTED]`) plus value-shape scan for JWT, Bearer, API keys | Write-time |
+| **URL Query** | `?token=xyz`, `?data=%E0%A4%A` | Sensitive param names replaced with `[REDACTED]`; malformed query strings fail closed (`?[REDACTED]`); value patterns redacted | Write-time |
+| **Request / Response Body** | `{"password": "secret", "note": "sk-..."}` | JSON keys & form-encoded keys matching sensitive words redacted; string values scanned for Bearer, JWT, `sk-`, `ghp_`, `AKIA` | Write-time |
+| **URL Userinfo** | `https://admin:secret@api.com` | Userinfo extracted and replaced with `https://[REDACTED]:[REDACTED]@api.com` | Write-time |
+| **URL Path** | `https://api.com/keys/sk-...` | Value patterns (`sk-`, `ghp_`, `AKIA`, JWT) stripped from path strings via `redactStringValue` | Write-time |
