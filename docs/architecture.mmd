@@ -1,0 +1,55 @@
+flowchart TD
+    subgraph Clients["Clients & Interfaces"]
+        UI["Inspector Web Dashboard<br/>(React 19 + TanStack Query + xyflow)"]
+        CLI["CLI & Scripts<br/>(pnpm demo / pnpm chaos)"]
+        Ext["External Webhooks & Services"]
+    end
+
+    subgraph API["HTTP API Layer (@durable/api)"]
+        Server["Hono REST API<br/>(127.0.0.1 Loopback Default)"]
+        Auth["Constant-Time Token Auth<br/>(crypto.timingSafeEqual)"]
+        RedactOut["Read-Time Redaction Serializer<br/>(redactApiOutput)"]
+    end
+
+    subgraph Engine["Core Workflow Engine (@durable/engine)"]
+        Coordinator["Engine Coordinator<br/>(startRun, fork, submitApproval)"]
+        ReplayEngine["Replay Engine & RunContext<br/>(step, waitForApproval, now, random)"]
+        Guard["Egress Guard Interceptor<br/>(AsyncLocalStorage)"]
+
+        subgraph ModeRouter["Connector Mode Router"]
+            LiveConns["Live Connectors<br/>(LiveHttpConnector + LiveSqlConnector)"]
+            ShadowConns["Shadow Connectors<br/>(ShadowHttpConnector + ShadowSqlConnector)"]
+        end
+    end
+
+    subgraph Workers["Distributed Worker Fleet"]
+        W1["Worker Process 1<br/>(OS Process / Pod)"]
+        W2["Worker Process 2<br/>(OS Process / Pod)"]
+        W3["Worker Process 3<br/>(OS Process / Pod)"]
+    end
+
+    subgraph Storage["PostgreSQL (ACID State Store)"]
+        RunsTable[("runs Table<br/>(status, mode, parent_id, fork_edit)")]
+        EventsTable[("events Table<br/>(Append-Only Trigger, PK: run_id, seq)")]
+        TasksTable[("tasks Table<br/>(SKIP LOCKED, Leases, Fencing)")]
+    end
+
+    UI -->|"GET /runs, GET /runs/:id, GET /runs/:id/effects"| Server
+    UI -->|"POST /runs/:id/approvals/:name"| Server
+    CLI -->|"POST /runs, POST /runs/:id/fork, POST /runs/:id/resume"| Server
+
+    Server --> Auth --> RedactOut
+    Server --> Coordinator
+
+    W1 & W2 & W3 -->|"claimTask() via FOR UPDATE SKIP LOCKED"| TasksTable
+    W1 & W2 & W3 -->|"execute(runId)"| ReplayEngine
+
+    ReplayEngine -->|"Load history (seq 1..N)"| EventsTable
+    ReplayEngine --> ModeRouter
+
+    LiveConns -->|"Real Network Outbound"| Ext
+    ShadowConns -->|"Egress Blocked / Auto-Rollback SQL"| Guard
+
+    ReplayEngine -->|"appendEvent(seq, type, payload)"| EventsTable
+    ReplayEngine -->|"heartbeatTask() / completeTask()"| TasksTable
+    Coordinator -->|"INSERT INTO runs / FOR UPDATE locks"| RunsTable
