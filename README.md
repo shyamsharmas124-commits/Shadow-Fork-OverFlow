@@ -61,6 +61,9 @@ All external effect requests captured by shadow connectors are redacted at **wri
 | **`runs.input`** | `{ "webhookSecret": "..." }` | Workflow initial payload stored in `runs` row. Redacted in API inspector serializer. | **Read-time** (API layer) |
 | **`runs.fork_edit`** | `{ input: { "token": "..." }, mocks: [...] }` | Fork input override and mocks stored in `runs` row. Redacted in API inspector serializer. | **Read-time** (API layer) |
 
+> [!WARNING]
+> Read-time redaction is best effort (field names and value patterns); a secret stored under an ordinary field name can still reach API clients, so the API must be treated as exposing whatever workflows store.
+
 ### Milestone 5a HTTP API & Inspector Endpoints
 
 Built on **Hono**:

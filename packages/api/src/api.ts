@@ -1,13 +1,21 @@
+import {
+  type Engine,
+  type ForkEdit,
+  type ForkMocksOption,
+  loadEvents,
+  redactApiOutput,
+  type StoredEvent,
+} from "@durable/engine";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Pool } from "pg";
-import type { Engine, ForkEdit, ForkMocksOption } from "./engine.js";
-import { loadEvents, type StoredEvent } from "./events.js";
-import { redactApiOutput } from "./redact.js";
+import { z } from "zod";
 
 export interface CreateApiOptions {
   engine: Engine;
   pool: Pool;
+  corsOrigin?: string;
+  maxLimit?: number;
 }
 
 export interface EffectDiffItem {
@@ -42,15 +50,11 @@ export interface EffectDiffItem {
   } | null;
 }
 
-/**
- * Builds the side-by-side effect diff between a shadow fork and its parent run.
- */
 export function buildEffectDiff(
   run: { id: string; parent_run_id: string | null; forked_from_seq: number | null },
   shadowEvents: StoredEvent[],
   parentEvents: StoredEvent[],
 ): EffectDiffItem[] {
-  // If not a fork, list steps from the current run
   if (!run.parent_run_id) {
     const items: EffectDiffItem[] = [];
     const occurrences: Record<string, number> = {};
@@ -111,7 +115,6 @@ export function buildEffectDiff(
     return items;
   }
 
-  // Extract parent steps and effects grouped by (stepName, occurrence)
   interface StepInfo {
     seq: number;
     name: string;
@@ -228,31 +231,77 @@ export function buildEffectDiff(
   return diffItems;
 }
 
-/**
- * Creates the Hono HTTP API application for the Durable engine.
- *
- * Framework Choice: Hono
- * Justification:
- * 1. Web Standards Native: Uses Request and Response objects native to Node 24+, standard fetch API.
- * 2. Zero External Dependencies: Core hono routing has 0 sub-dependencies, ensuring fast cold-start and lean footprint.
- * 3. Fast Zero-Port In-Memory Testing: app.request() executes directly in Vitest without listening on TCP sockets or port collisions.
- * 4. TypeScript-First Inference: Clean typed params, query, and JSON payloads.
- * 5. Node.js Production Serving: Seamlessly compatible with @hono/node-server when TCP listening is required.
- */
+const RunsQuerySchema = z.object({
+  status: z.enum(["running", "completed", "failed"]).optional(),
+  mode: z.enum(["live", "shadow"]).optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+const ForkBodySchema = z
+  .object({
+    atSeq: z.number().int().positive({ message: "atSeq must be a positive integer" }),
+    edit: z
+      .object({
+        input: z.unknown().optional(),
+        result: z.unknown().optional(),
+        mocks: z
+          .union([
+            z.record(z.string(), z.unknown()),
+            z.array(
+              z.object({
+                stepName: z.string(),
+                occurrence: z.number().int().nonnegative().optional(),
+                result: z.unknown(),
+              }),
+            ),
+          ])
+          .optional(),
+      })
+      .optional(),
+    mocks: z
+      .union([
+        z.record(z.string(), z.unknown()),
+        z.array(
+          z.object({
+            stepName: z.string(),
+            occurrence: z.number().int().nonnegative().optional(),
+            result: z.unknown(),
+          }),
+        ),
+      ])
+      .optional(),
+  })
+  .refine((d) => d.edit !== undefined || d.mocks !== undefined, {
+    message: "Must provide either 'edit' or 'mocks'",
+  });
+
 export function createApiApp(options: CreateApiOptions): Hono {
   const { engine, pool } = options;
+  const configuredCorsOrigin = options.corsOrigin ?? "http://localhost:5173";
+  const MAX_LIMIT = options.maxLimit ?? 50;
+
   const app = new Hono();
 
-  // Enable CORS for inspector dashboard
-  app.use("*", cors());
+  // Strict CORS origin configuration: only configured origin is allowed
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => {
+        if (!origin) return null;
+        if (origin === configuredCorsOrigin) {
+          return configuredCorsOrigin;
+        }
+        return null;
+      },
+    }),
+  );
 
-  // Error handling middleware with fail-closed redaction
-  app.onError((err, c) => {
-    const message = err instanceof Error ? err.message : String(err);
+  // Generic 500 error handler: never leak SQL text, internal schema, or stack traces
+  app.onError((_err, c) => {
     return c.json(
-      redactApiOutput({
-        error: message,
-      }),
+      {
+        error: "Internal server error",
+      },
       500,
     );
   });
@@ -260,9 +309,14 @@ export function createApiApp(options: CreateApiOptions): Hono {
   // Health check
   app.get("/health", (c) => c.json({ status: "ok" }));
 
-  // Helper endpoint to start a new run (useful for dashboard / tests)
+  // Helper endpoint to start a new run
   app.post("/runs", async (c) => {
-    const body = await c.req.json<{ workflowType: string; input?: unknown }>();
+    let body: { workflowType?: string; input?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
     if (!body?.workflowType) {
       return c.json({ error: "Missing workflowType in request body" }, 400);
     }
@@ -272,27 +326,38 @@ export function createApiApp(options: CreateApiOptions): Hono {
 
   /**
    * 1. GET /runs
-   * List runs with status, timing, and mode.
-   * Query params: status, mode, limit.
+   * List runs with status, timing (derived from events), and mode.
+   * Query validation with Zod. Limit capped at MAX_LIMIT (50).
    */
   app.get("/runs", async (c) => {
-    const statusFilter = c.req.query("status");
-    const modeFilter = c.req.query("mode");
-    const limit = Number.parseInt(c.req.query("limit") ?? "50", 10);
+    const rawQuery = c.req.query();
+    const parseResult = RunsQuerySchema.safeParse(rawQuery);
+    if (!parseResult.success) {
+      return c.json(
+        {
+          error: "Validation failed",
+          issues: parseResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const { status, mode, limit: requestedLimit } = parseResult.data;
+    const limit = Math.min(requestedLimit ?? MAX_LIMIT, MAX_LIMIT);
 
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    if (statusFilter) {
-      params.push(statusFilter);
+    if (status) {
+      params.push(status);
       conditions.push(`r.status = $${params.length}`);
     }
-    if (modeFilter) {
-      params.push(modeFilter);
+    if (mode) {
+      params.push(mode);
       conditions.push(`r.mode = $${params.length}`);
     }
 
-    params.push(Math.min(Math.max(limit, 1), 200));
+    params.push(limit);
     const limitPlaceholder = `$${params.length}`;
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -356,13 +421,12 @@ export function createApiApp(options: CreateApiOptions): Hono {
       };
     });
 
-    // Read-time redaction applied across every run row and nested fields
     return c.json(redactApiOutput(result));
   });
 
   /**
    * 2. GET /runs/:id
-   * Full event log, current status, timing, and task state.
+   * Full event log, current status, timing derived from events, and active task state.
    */
   app.get("/runs/:id", async (c) => {
     const id = c.req.param("id");
@@ -449,7 +513,6 @@ export function createApiApp(options: CreateApiOptions): Hono {
       })),
     };
 
-    // Read-time redaction applied to event payloads, step inputs, results, errors, tasks, and run inputs
     return c.json(redactApiOutput(responseData));
   });
 
@@ -494,16 +557,38 @@ export function createApiApp(options: CreateApiOptions): Hono {
       steps: diffItems,
     };
 
-    // Read-time redaction applied to effects diff
     return c.json(redactApiOutput(responseData));
   });
 
   /**
    * 4. POST /runs/:id/fork
-   * Fork at atSeq with edit and mocks. Returns { runId, warnings }.
+   * Fork at atSeq with edit and mocks. Validated with Zod.
    */
   app.post("/runs/:id/fork", async (c) => {
     const id = c.req.param("id");
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json(
+        { error: "Validation failed", issues: [{ message: "Invalid JSON body" }] },
+        400,
+      );
+    }
+
+    const parseResult = ForkBodySchema.safeParse(rawBody);
+    if (!parseResult.success) {
+      return c.json(
+        {
+          error: "Validation failed",
+          issues: parseResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const body = parseResult.data;
 
     const { rows: runRows } = await pool.query<{
       id: string;
@@ -517,33 +602,34 @@ export function createApiApp(options: CreateApiOptions): Hono {
       return c.json({ error: `Run not found: ${id}` }, 404);
     }
 
-    const body = await c.req.json<{
-      atSeq: number;
-      edit?: ForkEdit;
-      mocks?: ForkMocksOption;
-    }>();
-
-    if (!body || typeof body.atSeq !== "number" || body.atSeq < 1) {
-      return c.json({ error: "Missing or invalid 'atSeq' in request body" }, 400);
-    }
-
     const warnings: string[] = [];
     if (run.mode === "shadow") {
       warnings.push("Parent run was already in shadow mode; created nested shadow fork.");
     }
 
-    // Determine edit and mocks
     let editToPass: ForkEdit;
     if (body.edit && typeof body.edit === "object") {
-      editToPass = { ...body.edit };
-      if (body.mocks && !("mocks" in editToPass)) {
-        editToPass.mocks = body.mocks;
+      const mocks = (body.edit.mocks ?? body.mocks) as ForkMocksOption | undefined;
+      if ("input" in body.edit && body.edit.input !== undefined) {
+        editToPass = { input: body.edit.input, mocks };
+      } else if ("result" in body.edit && body.edit.result !== undefined) {
+        editToPass = { result: body.edit.result, mocks };
+      } else if (mocks) {
+        editToPass = { mocks };
+      } else {
+        return c.json(
+          {
+            error: "Validation failed",
+            issues: [{ message: "Missing input, result, or mocks in edit" }],
+          },
+          400,
+        );
       }
     } else if (body.mocks) {
-      editToPass = { mocks: body.mocks };
+      editToPass = { mocks: body.mocks as ForkMocksOption };
     } else {
       return c.json(
-        { error: "Must provide either 'edit' or 'mocks' in request body to fork" },
+        { error: "Validation failed", issues: [{ message: "Missing edit or mocks" }] },
         400,
       );
     }
@@ -559,7 +645,9 @@ export function createApiApp(options: CreateApiOptions): Hono {
     }
 
     try {
-      const forkedRunId = await engine.fork(id, body.atSeq, editToPass, { mocks: body.mocks });
+      const forkedRunId = await engine.fork(id, body.atSeq, editToPass, {
+        mocks: body.mocks as ForkMocksOption,
+      });
       return c.json(
         redactApiOutput({
           runId: forkedRunId,
@@ -604,16 +692,13 @@ export function createApiApp(options: CreateApiOptions): Hono {
     }
 
     try {
-      // 1. Reap any expired task leases first
       await engine.reap();
 
-      // 2. If run is running and has a pending task delayed in the future, fast-forward run_at
       await pool.query(
         `UPDATE tasks SET run_at = now() WHERE run_id = $1 AND status = 'pending' AND run_at > now()`,
         [id],
       );
 
-      // 3. Execute with resumeFailed enabled so failed runs can be retried/resumed
       const outcome = await engine.execute(id, { resumeFailed: true });
 
       return c.json(
