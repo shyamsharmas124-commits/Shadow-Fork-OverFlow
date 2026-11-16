@@ -367,6 +367,60 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     expect(recordedKeys[key2]).toBe(key2);
   });
 
+  it("pins idempotency key derivation: same run+step gives the same key across a retry; different runs give different keys", async () => {
+    const runId1 = "run-test-uuid-1111";
+    const runId2 = "run-test-uuid-2222";
+    const stepName = "charge-card";
+
+    // 1. Direct function contract: makeIdempotencyKey(runId, stepKey) === `${runId}:${stepKey}`
+    expect(makeIdempotencyKey(runId1, stepName)).toBe(`${runId1}:${stepName}`);
+    expect(makeIdempotencyKey(runId2, stepName)).toBe(`${runId2}:${stepName}`);
+    expect(makeIdempotencyKey(runId1, stepName)).not.toBe(makeIdempotencyKey(runId2, stepName));
+
+    // 2. Execution-level verification across step retries
+    const keysSeenOnAttempts: string[] = [];
+    let attemptCount = 0;
+    const wfType = `wf_idem_pin_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wfType]: async (ctx: Ctx) => {
+        return await ctx.step(
+          stepName,
+          async (_inp, sctx) => {
+            attemptCount++;
+            keysSeenOnAttempts.push(sctx.idempotencyKey);
+            if (attemptCount === 1) {
+              throw new Error("transient network failure on attempt 1");
+            }
+            return { ok: true };
+          },
+          {},
+          { maxAttempts: 3, initialBackoffMs: 0 },
+        );
+      },
+    });
+
+    const liveRunId = await engine.startRun(wfType, {});
+    const res1 = await engine.execute(liveRunId);
+    expect(res1.status).toBe("running");
+    expect(attemptCount).toBe(1);
+
+    const res2 = await engine.execute(liveRunId);
+    expect(res2.status).toBe("completed");
+    expect(attemptCount).toBe(2);
+    expect(keysSeenOnAttempts.length).toBe(2);
+
+    // Same run + step produces identical idempotency key across retries
+    expect(keysSeenOnAttempts[0]).toBe(`${liveRunId}:${stepName}`);
+    expect(keysSeenOnAttempts[1]).toBe(`${liveRunId}:${stepName}`);
+    expect(keysSeenOnAttempts[0]).toBe(keysSeenOnAttempts[1]);
+
+    // Different run produces different idempotency key
+    const otherRunId = await engine.startRun(wfType, {});
+    const otherKey = makeIdempotencyKey(otherRunId, stepName);
+    expect(otherKey).toBe(`${otherRunId}:${stepName}`);
+    expect(otherKey).not.toBe(keysSeenOnAttempts[0]);
+  });
+
   it("step timeout aborts step execution and counts as a failed attempt", async () => {
     let callCount = 0;
     let signalWasAborted = false;

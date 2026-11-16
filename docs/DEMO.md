@@ -118,4 +118,4 @@ pnpm chaos
   - 100% completion (`completed`).
   - **0 duplicate StepCompleted events** in the event log.
   - Strictly contiguous sequence numbers (`1..N`).
-  - Outbound retries carry matching `Idempotency-Key` headers.
+  - Outbound retries carry matching `Idempotency-Key` headers derived via `makeIdempotencyKey(runId, stepKey)` as `${runId}:${stepKey}` (`packages/engine/src/context.ts:96-98`).

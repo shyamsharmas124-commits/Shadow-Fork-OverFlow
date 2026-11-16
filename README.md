@@ -104,10 +104,11 @@ Building reliable business processes across distributed microservices, LLM APIs,
 ### 4. At-Least-Once External Delivery & Exactly-Once Event Log Recording
 - The event log records each step completion (`StepCompleted`) exactly once; external network calls are at-least-once.
 - If a worker crashes mid-task, the reaper (`reapTasks`) resets expired leases back to `pending`.
-- Every step receives an auto-generated idempotency key:
+- Every step receives an auto-generated idempotency key derived via `makeIdempotencyKey(runId, stepKey)`:
   $$\text{idempotencyKey} = \text{runId} + ":" + \text{stepName}$$
-  (implemented at `packages/engine/src/context.ts:94-96`).
+  (implemented at `packages/engine/src/context.ts:96-98` and assigned at line 301).
 - Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header on external network calls.
+- No test proves that external receivers deduplicate on Idempotency-Key; the engine only guarantees it sends the same key on a retry.
 - **Deterministic Duplicate Window**: When a worker crashes (e.g. via SIGKILL) after dispatching an outbound network call but before committing `StepCompleted` to PostgreSQL, a replacement worker re-executes the step carrying the identical `Idempotency-Key`. An internal test-only hook (`__testHookBeforeStepCommit`) pauses execution between network response and database commit to verify this window deterministically; this hook is strictly gated behind `NODE_ENV === 'test'` and cannot be enabled in normal or production runs.
 
 ### 5. Human-in-the-Loop Approval Gates
@@ -145,7 +146,7 @@ External effect requests captured by shadow connectors are redacted at **write-t
 | **`runs.fork_edit`** | `{ input: { "token": "..." }, mocks: [...] }` | Fork input override and mocks stored in `runs` row. Redacted in API serializer. | **Read-time** (API layer) |
 
 > [!WARNING]
-> Read-time redaction is best effort (field names and known credential value patterns); a secret stored under an ordinary field name (e.g. `{ "data": "supersecret" }`) can still reach API clients. The API must be treated as exposing whatever workflows store.
+> Value-pattern redaction (including `tok_`, `sk-`, `ghp_`, `AKIA`, and JWT shapes) is best-effort and may over-redact identifiers matching those patterns. Read-time redaction is best effort (field names and known credential value patterns); a secret stored under an ordinary field name (e.g. `{ "data": "supersecret" }`) can still reach API clients. The API must be treated as exposing whatever workflows store.
 
 ---
 
@@ -169,7 +170,7 @@ Every architectural and behavioral claim in this specification is backed by exec
 | **4.1** Event log has one StepCompleted per step; external calls can repeat with the same key | `kills worker with SIGKILL during post-request / pre-commit window: counting server receives exactly 2 requests with identical Idempotency-Key and DB records exactly 1 StepCompleted` | `packages/engine/test/duplicate-window.test.ts:62` | Verified PASS |
 | **4.2** Live HTTP connector request carries `Idempotency-Key` header | `live HTTP connector: request carries Idempotency-Key header received by server` | `packages/engine/test/shadow.test.ts:153` | Verified PASS |
 | **4.3** Reaper resets expired leases to `pending` | `reaper returns expired running tasks to pending`<br/>`reaper reschedules task when lease expires while step is running` | `packages/engine/test/leasing.test.ts:65`<br/>`packages/engine/test/reliability.test.ts:373` | Verified PASS |
-| **4.4** Auto-generated idempotency key (`${runId}:${stepKey}`) | `idempotency keys are unique per run and differ between parent and fork` | `packages/engine/test/fork.test.ts:316` | Verified PASS |
+| **4.4** Auto-generated idempotency key (`${runId}:${stepKey}`) | `idempotency keys are unique per run and differ between parent and fork`<br/>`pins idempotency key derivation: same run+step gives the same key across a retry; different runs give different keys` | `packages/engine/test/fork.test.ts:452`<br/>`packages/engine/test/reliability.test.ts:370` | Verified PASS |
 | **4.5** Outbound HTTP connectors pass `Idempotency-Key` header without redaction | `does not redact Idempotency-Key headers while redacting other sensitive headers` | `packages/engine/test/shadow.test.ts:1330` | Verified PASS |
 | **5.1** `waitForApproval` parks run with status `running` | `1. park/resume: workflow requests approval, parks run without tasks, and resumes to completion on approval` | `packages/engine/test/approval.test.ts:84` | Verified PASS |
 | **5.2** While parked: 0 leases held, 0 pending tasks | `1. park/resume: workflow requests approval, parks run without tasks, and resumes to completion on approval`<br/>`4. worker crash while parked: worker dies/reaps, run remains cleanly parked with 0 tasks picked up` | `packages/engine/test/approval.test.ts:84`<br/>`packages/engine/test/approval.test.ts:233` | Verified PASS |
