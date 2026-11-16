@@ -10,6 +10,8 @@ export interface WorkerOptions {
   heartbeatIntervalMs?: number;
   pollIntervalMs?: number;
   clock?: Clock;
+  reapErrorThrottleMs?: number;
+  onReapError?: (err: unknown) => void;
   /** Test-only hook: invoked before StepCompleted is committed. Gated by NODE_ENV === 'test'. */
   __testHookBeforeStepCommit?: (stepName: string, attempt: number) => Promise<void> | void;
 }
@@ -21,6 +23,8 @@ export class Worker {
   public readonly pollIntervalMs: number;
   public readonly clock: Clock;
   private readonly options: WorkerOptions;
+  private lastReapErrorLoggedAt = 0;
+  private readonly reapErrorThrottleMs: number;
 
   public lastFencingError?: FencingError;
 
@@ -39,6 +43,7 @@ export class Worker {
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 1000;
     this.pollIntervalMs = options.pollIntervalMs ?? 50;
     this.clock = options.clock ?? engine.getClock() ?? new SystemClock();
+    this.reapErrorThrottleMs = options.reapErrorThrottleMs ?? 5000;
   }
 
   get isRunning(): boolean {
@@ -57,7 +62,16 @@ export class Worker {
     if (this.killed) return false;
     const types = this.engine.getWorkflowTypes();
     // Autonomous recovery: reap expired tasks for registered workflows so stalled tasks are recovered by workers
-    await this.engine.reap(this.clock.now(), types.length > 0 ? types : undefined).catch(() => {});
+    try {
+      await this.engine.reap(this.clock.now(), types.length > 0 ? types : undefined);
+    } catch (err) {
+      const nowMs = this.clock.now().getTime();
+      if (nowMs - this.lastReapErrorLoggedAt >= this.reapErrorThrottleMs) {
+        this.lastReapErrorLoggedAt = nowMs;
+        console.error(`[Worker ${this.workerId}] Error during autonomous task reaping:`, err);
+        this.options.onReapError?.(err);
+      }
+    }
 
     const task = await claimTask(
       this.engine.getPool(),

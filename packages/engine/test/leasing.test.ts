@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   claimTask,
   completeTask,
@@ -318,4 +318,51 @@ describe("Milestone 2 - 3 Workers on real Postgres with mid-task kill", () => {
       expect(t.status).toBe("completed");
     }
   }, 15000);
+
+  it("a failing reap is logged with rate-limiting and does not stop the worker", async () => {
+    const wf = `reap_fail_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, { [wf]: async () => ({ ok: true }) });
+
+    // Mock engine.reap to reject with an error
+    const reapError = new Error("Simulated transient PostgreSQL connection error during reap");
+    const reapSpy = vi.spyOn(engine, "reap").mockRejectedValue(reapError);
+
+    const loggedErrors: unknown[][] = [];
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      loggedErrors.push(args);
+    });
+
+    try {
+      const worker = new Worker(engine, {
+        workerId: "worker-reap-fail-test",
+        reapErrorThrottleMs: 5000,
+      });
+
+      // 1. First tick with no tasks: reap fails, error is logged, tick returns false, worker does NOT throw
+      const didWork1 = await worker.tick();
+      expect(didWork1).toBe(false);
+      expect(reapSpy).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(String(loggedErrors[0]![0])).toContain(
+        "[Worker worker-reap-fail-test] Error during autonomous task reaping:",
+      );
+
+      // 2. Second tick immediately: reap fails again, but error is throttled/not spammed
+      const didWork2 = await worker.tick();
+      expect(didWork2).toBe(false);
+      expect(reapSpy).toHaveBeenCalledTimes(2);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1); // Throttled: not called a second time
+
+      // 3. Worker remains fully operational and executes pending task despite failing reap
+      const runId = await engine.startRun(wf, {});
+      const didWork3 = await worker.tick();
+      expect(didWork3).toBe(true);
+
+      const events = await loadEvents(pool, runId);
+      expect(events.some((e) => e.type === "RunCompleted")).toBe(true);
+    } finally {
+      reapSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });
