@@ -367,7 +367,7 @@ export class RunContext implements Ctx {
       });
 
     let stepPromise = Promise.resolve().then(() =>
-      stepMode === "shadow" ? runInShadowContext(invokeStepFn) : invokeStepFn(),
+      this.runMode === "shadow" ? runInShadowContext(invokeStepFn) : invokeStepFn(),
     );
 
     if (options?.timeoutMs && options.timeoutMs > 0) {

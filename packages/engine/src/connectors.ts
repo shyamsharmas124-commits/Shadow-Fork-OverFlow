@@ -38,7 +38,7 @@ export interface CapturedEffect {
  */
 export function redactStringValue(val: string): string {
   return val
-    .replace(/\bBearer\s+[a-zA-Z0-9_\-\.~+/]+=*/gi, "Bearer [REDACTED]")
+    .replace(/\bBearer\s+[a-zA-Z0-9_\-.~+/]+=*/gi, "Bearer [REDACTED]")
     .replace(/\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, "[REDACTED_JWT]")
     .replace(/\bsk-[a-zA-Z0-9_-]{20,}\b/g, "[REDACTED_KEY]")
     .replace(/\bghp_[a-zA-Z0-9]{30,}\b/g, "[REDACTED_KEY]")
@@ -362,7 +362,9 @@ export function validateShadowSql(sql: string): void {
   }
 
   if (/\bROLLBACK\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: transaction control (ROLLBACK) is forbidden in shadow mode.");
+    throw new Error(
+      "Shadow SQL error: transaction control (ROLLBACK) is forbidden in shadow mode.",
+    );
   }
   if (/\bSAVEPOINT\b/i.test(stripped)) {
     throw new Error("Shadow SQL error: savepoints are forbidden in shadow mode.");
@@ -371,7 +373,9 @@ export function validateShadowSql(sql: string): void {
     throw new Error("Shadow SQL error: transaction control (RELEASE) is forbidden in shadow mode.");
   }
   if (/^SET\s+(?:SESSION\s+)?(?!LOCAL\b)/i.test(trimmed)) {
-    throw new Error("Shadow SQL error: session-level SET is forbidden in shadow mode (use SET LOCAL).");
+    throw new Error(
+      "Shadow SQL error: session-level SET is forbidden in shadow mode (use SET LOCAL).",
+    );
   }
   if (/\bRESET\b/i.test(stripped)) {
     throw new Error("Shadow SQL error: RESET is forbidden in shadow mode.");
@@ -392,7 +396,9 @@ export function validateShadowSql(sql: string): void {
     throw new Error("Shadow SQL error: CALL is forbidden in shadow mode.");
   }
   if (/\bVACUUM\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: statement 'VACUUM' cannot run inside a transaction and cannot be rolled back.");
+    throw new Error(
+      "Shadow SQL error: statement 'VACUUM' cannot run inside a transaction and cannot be rolled back.",
+    );
   }
   if (/\bCONCURRENTLY\b/i.test(stripped)) {
     throw new Error("Shadow SQL error: CONCURRENTLY operations are forbidden in shadow mode.");

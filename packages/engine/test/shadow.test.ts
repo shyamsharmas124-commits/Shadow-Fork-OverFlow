@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import http from "node:http";
+import { EventEmitter } from "node:events";
+import http, { request as esmHttpRequest } from "node:http";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -1077,6 +1078,185 @@ describe("Milestone 4b - Shadow Mode", () => {
         client2.release(true);
         await tinyPool.end();
       }
+    });
+  });
+
+  describe("M4d Item 3 - Egress guard breadth", () => {
+    it("catches named ESM imports: import { request } from 'node:http'", async () => {
+      const wf = `wf_esm_egress_${randomUUID().slice(0, 8)}`;
+      let isFork = false;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "init", {}, { kind: "pure" });
+          return await ctx.step(
+            "step-esm",
+            () => {
+              if (isFork) {
+                esmHttpRequest("http://127.0.0.1:9999");
+              }
+              return { ok: true };
+            },
+            {},
+            { kind: "effectful-external", maxAttempts: 1, mock: { ok: true } },
+          );
+        },
+      });
+
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      isFork = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      const fOutcome = await engine.execute(forkId);
+      expect(fOutcome.status).toBe("failed");
+      if (fOutcome.status === "failed") {
+        expect(fOutcome.error).toMatch(/Shadow egress violation.*node:http request/i);
+      }
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("catches egress inside pure steps during shadow mode", async () => {
+      const wf = `wf_pure_egress_${randomUUID().slice(0, 8)}`;
+      let isFork = false;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "init", {}, { kind: "pure" });
+          return await ctx.step(
+            "pure-step",
+            async () => {
+              if (isFork) {
+                await fetch("http://127.0.0.1:9999/pure-leak");
+              }
+              return { ok: true };
+            },
+            {},
+            { kind: "pure", maxAttempts: 1 },
+          );
+        },
+      });
+
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      isFork = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      const fOutcome = await engine.execute(forkId);
+      expect(fOutcome.status).toBe("failed");
+      if (fOutcome.status === "failed") {
+        expect(fOutcome.error).toMatch(/Shadow egress violation.*fetch/i);
+      }
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("verifies AsyncLocalStorage propagation across async primitives", async () => {
+      const wf = `wf_als_prop_${randomUUID().slice(0, 8)}`;
+      let isFork = false;
+
+      const preRegisteredEmitter = new EventEmitter();
+      let preEmitterCaughtEgress = false;
+      preRegisteredEmitter.on("leak", () => {
+        try {
+          fetch("http://127.0.0.1:9999/emitter-leak");
+        } catch (err) {
+          if (err instanceof ShadowEgressError) {
+            preEmitterCaughtEgress = true;
+          }
+        }
+      });
+
+      let preCallbackCaughtEgress = false;
+      const preCallback = () => {
+        try {
+          fetch("http://127.0.0.1:9999/callback-leak");
+        } catch (err) {
+          if (err instanceof ShadowEgressError) {
+            preCallbackCaughtEgress = true;
+          }
+        }
+      };
+
+      let promiseChainBlocked = false;
+      let setTimeoutBlocked = false;
+      let innerEmitterBlocked = false;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("step-init", () => "init", {}, { kind: "pure" });
+          return await ctx.step(
+            "step-als",
+            async () => {
+              if (!isFork) return { ok: true };
+
+              // 1. Promise chains
+              try {
+                await Promise.resolve()
+                  .then(() => 1)
+                  .then(() => {
+                    fetch("http://127.0.0.1:9999/promise-leak");
+                  });
+              } catch (err) {
+                if (err instanceof ShadowEgressError) promiseChainBlocked = true;
+              }
+
+              // 2. setTimeout
+              await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                  try {
+                    fetch("http://127.0.0.1:9999/timeout-leak");
+                  } catch (err) {
+                    if (err instanceof ShadowEgressError) setTimeoutBlocked = true;
+                  }
+                  resolve();
+                }, 10);
+              });
+
+              // 3. EventEmitter registered inside shadow step
+              const innerEmitter = new EventEmitter();
+              innerEmitter.on("leak", () => {
+                try {
+                  fetch("http://127.0.0.1:9999/inner-leak");
+                } catch (err) {
+                  if (err instanceof ShadowEgressError) innerEmitterBlocked = true;
+                }
+              });
+              innerEmitter.emit("leak");
+
+              // 4. Pre-registered EventEmitter emitted inside shadow step
+              preRegisteredEmitter.emit("leak");
+
+              // 5. Pre-registered callback called inside shadow step
+              preCallback();
+
+              return { ok: true };
+            },
+            {},
+            { kind: "effectful-external", maxAttempts: 1, mock: { ok: true } },
+          );
+        },
+      });
+
+      const parentId = await engine.startRun(wf, {});
+      await engine.execute(parentId);
+
+      isFork = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      await engine.execute(forkId);
+
+      // In Node 24:
+      // Promise chains, setTimeout, and synchronous calls to callbacks/emitters
+      // (even if registered before) run within the synchronous execution callstack
+      // of the shadow step, so ALS is preserved!
+      expect(promiseChainBlocked).toBe(true);
+      expect(setTimeoutBlocked).toBe(true);
+      expect(innerEmitterBlocked).toBe(true);
+      expect(preEmitterCaughtEgress).toBe(true);
+      expect(preCallbackCaughtEgress).toBe(true);
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
     });
   });
 });

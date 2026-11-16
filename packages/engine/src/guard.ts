@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import http from "node:http";
 import https from "node:https";
+import { syncBuiltinESMExports } from "node:module";
 
 export class ShadowEgressError extends Error {
   constructor(target: string) {
@@ -93,6 +94,8 @@ export function installEgressGuard(): void {
     }
     return origHttpsGetFn.apply(this, args);
   };
+
+  syncBuiltinESMExports();
 }
 
 /**

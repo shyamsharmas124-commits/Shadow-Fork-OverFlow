@@ -33,7 +33,10 @@ Tests use `DATABASE_URL`. To use Testcontainers instead, replace `makePool()` in
 
 ### Shadow Execution & Safety Notes
 - **Shadow SQL Transactions & Sequences**: Reversible SQL steps in shadow mode execute inside dedicated transactions that are guaranteed to `ROLLBACK` in a `finally` block on completion, error, timeout, or abort. Note that Postgres sequence generators (such as `SERIAL`, `BIGSERIAL`, or `nextval(...)`) are inherently non-transactional by Postgres engine design: sequence values consumed during a shadow step are **not** rolled back when the transaction aborts.
-- **Egress Guard Boundaries**: Shadow mode step execution activates an `AsyncLocalStorage`-backed egress guard that intercepts `globalThis.fetch`, `node:http.request`, `node:http.get`, `node:https.request`, and `node:https.get`, throwing `ShadowEgressError` on any unauthorized outbound network request. Plainly, this guard does **NOT** cover:
-  1. Direct socket connections via raw `node:net` or `node:dgram` sockets.
-  2. Out-of-band third-party database clients or connection pools initialized outside the workflow engine context.
-  3. Native compiled C/C++ addons or child processes spawned via `node:child_process` that perform independent networking.
+- **Egress Guard Boundaries & AsyncLocalStorage Propagation**: Shadow mode step execution activates an `AsyncLocalStorage`-backed egress guard that intercepts `globalThis.fetch`, `node:http.request`, `node:http.get`, `node:https.request`, and `node:https.get` (including named ESM imports synchronized via `node:module`'s `syncBuiltinESMExports()`), throwing `ShadowEgressError` on any unauthorized outbound network request.
+  - **Context Propagation**: The shadow ALS context cleanly survives across Promise chains (`.then()`, `await`), timers (`setTimeout`, `setInterval`), `EventEmitter` listeners invoked synchronously within the step, and callbacks called synchronously within the step.
+  - **Where it breaks**: If an external background task or long-lived server registered an event emitter or callback *outside* the shadow step and triggers it asynchronously from an external event source (such as an external socket connection or external queue processing loop outside the workflow engine), that asynchronous handler runs in the background task's own context, not the step's shadow context.
+  - Plainly, this guard also does **NOT** cover:
+    1. Direct socket connections via raw `node:net` or `node:dgram` sockets.
+    2. Out-of-band third-party database clients or connection pools initialized outside the workflow engine context.
+    3. Native compiled C/C++ addons or child processes spawned via `node:child_process` that perform independent networking.
