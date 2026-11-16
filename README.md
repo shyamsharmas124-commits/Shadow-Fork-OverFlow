@@ -101,11 +101,13 @@ Building reliable business processes across distributed microservices, LLM APIs,
 - A background heartbeat timer (`heartbeatTask`) periodically extends `lease_expires_at`.
 - When completing or failing a task, the worker verifies that its worker ID still matches `lease_owner`. If the lease expired and was claimed by another worker, the engine throws `FencingError`, preventing zombie workers from corrupting the run.
 
-### 4. At-Least-Once Delivery + Idempotency = Exactly-Once Effects
+### 4. At-Least-Once External Delivery & Exactly-Once Event Log Recording
+- The event log records each step completion (`StepCompleted`) exactly once; external network calls are at-least-once.
+- Protection against duplicate effects depends on the receiver honouring the idempotency key.
 - If a worker crashes mid-task, the reaper (`reapTasks`) resets expired leases back to `pending`.
 - Every step receives an auto-generated idempotency key:
   $$\text{idempotencyKey} = \text{sha256}(\text{runId} + ":" + \text{stepName} + ":" + \text{occurrence})$$
-- Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header. Downstream payment gateways and APIs deduplicate retry requests, ensuring exactly-once business effects despite at-least-once execution.
+- Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header. Downstream payment gateways and APIs honour this key to deduplicate retry requests, preventing duplicate real-world effects.
 
 ### 5. Human-in-the-Loop Approval Gates
 - Workflows can request human intervention with `await ctx.waitForApproval(name, payload)`.

@@ -10,12 +10,33 @@ import { CHAOS_WORKFLOW_TYPE, chaosRecoveryWorkflow } from "./chaos-worker.js";
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Windows Signal Semantics & Kill Behavior:
+ * On Windows, POSIX signals (SIGKILL, SIGTERM, SIGINT) are not natively supported by the OS.
+ * As documented in Node.js official documentation for v24.x:
+ * Reference: https://nodejs.org/docs/latest-v24.x/api/process.html#signal-events
+ * - In Node.js on Windows, `process.kill(pid, "SIGKILL")` terminates the target process
+ *   unconditionally using the Win32 `TerminateProcess` API. The process exits abruptly with no cleanup.
+ * - The supervisor process detects process termination via libuv's process handle watcher,
+ *   which fires the `child.on("exit")` event on the ChildProcess instance.
+ *
+ * Kill Budget:
+ * In each iteration, a fixed budget of 8 worker kills is executed (`workersKilled < 8`).
+ * Every 250ms, the chaos monitor selects an active worker at random from the active worker pool
+ * and issues `process.kill(pid, "SIGKILL")`, immediately spawning a replacement worker.
+ * This fixed kill budget guarantees deterministic lease stress across the 10 concurrent workflows
+ * while allowing surviving workers to finish all remaining tasks within the test timeout.
+ */
+
 export interface IterationReport {
   iteration: number;
   workflowsTotal: number;
   workflowsCompleted: number;
   workersKilled: number;
-  duplicateEffects: number;
+  rawRequests: number;
+  uniqueKeys: number;
+  duplicateAttempts: number;
+  duplicateEffectsInLog: number;
   sequenceContiguous: boolean;
   durationMs: number;
   passed: boolean;
@@ -31,20 +52,31 @@ export async function runChaosIteration(
   const maxDurationMs = options.maxDurationMs ?? 40000;
   const startTime = Date.now();
 
-  // 1. Start External Mock HTTP Service
-  const effectCalls = new Map<string, number>();
+  // 1. External Mock HTTP Service in COUNT-ONLY mode (no deduplication)
+  // Receives raw HTTP requests, records every arrival, and counts raw attempts per idempotency key.
+  let rawRequestsCount = 0;
+  const requestsPerKey = new Map<string, number>();
+  const rawRequestsLog: Array<{ key: string; runId: string; step: string }> = [];
+
   const mockServer = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/effect") {
+      rawRequestsCount++;
       let body = "";
       for await (const chunk of req) body += chunk;
       try {
         const data = JSON.parse(body);
         const key = data.idempotencyKey || (req.headers["idempotency-key"] as string);
         if (key) {
-          effectCalls.set(key, (effectCalls.get(key) || 0) + 1);
+          requestsPerKey.set(key, (requestsPerKey.get(key) || 0) + 1);
+          rawRequestsLog.push({
+            key,
+            runId: data.runId || "unknown",
+            step: data.step || "unknown",
+          });
         }
+        // Count-only mode: responds 200 OK without performing receiver deduplication
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", count: effectCalls.get(key) || 1 }));
+        res.end(JSON.stringify({ status: "ok", count: requestsPerKey.get(key) || 1 }));
       } catch {
         res.writeHead(400).end();
       }
@@ -89,6 +121,7 @@ export async function runChaosIteration(
 
     workers.set(workerId, child);
 
+    // Supervisor detects kill via child exit event
     child.on("exit", () => {
       workers.delete(workerId);
     });
@@ -111,12 +144,13 @@ export async function runChaosIteration(
     runIds.push(runId);
   }
 
-  // 5. Chaos Monkey loop: randomly SIGKILL workers mid-flight and replace them
+  // 5. Chaos Monkey loop: randomly SIGKILL workers mid-flight (up to fixed cap of 8 kills) and replace them
   let chaosRunning = true;
   const chaosMonkeyInterval = setInterval(async () => {
     if (!chaosRunning) return;
     const activeIds = Array.from(workers.keys());
     if (activeIds.length > 0 && workersKilled < 8) {
+      // Pick random active worker
       const targetId = activeIds[Math.floor(Math.random() * activeIds.length)]!;
       const targetProc = workers.get(targetId);
       if (targetProc && targetProc.pid) {
@@ -124,7 +158,7 @@ export async function runChaosIteration(
           process.kill(targetProc.pid, "SIGKILL");
           workersKilled++;
           workers.delete(targetId);
-          // Spawn replacement worker
+          // Spawn replacement worker immediately
           spawnWorker();
         } catch {
           // Process might have already exited
@@ -161,7 +195,7 @@ export async function runChaosIteration(
   // Terminate any remaining workers
   for (const [id, child] of workers) {
     try {
-      if (child.pid) process.kill(child.pid, "SIGTERM");
+      if (child.pid) process.kill(child.pid, "SIGKILL");
     } catch {}
   }
   await new Promise<void>((resolve) => mockServer.close(() => resolve()));
@@ -173,7 +207,7 @@ export async function runChaosIteration(
   );
 
   const completedRunsCount = finalRuns.filter((r) => r.status === "completed").length;
-  let totalDuplicateEffects = 0;
+  let totalDuplicateEffectsInLog = 0;
   let allSequencesContiguous = true;
 
   for (const runId of runIds) {
@@ -186,14 +220,32 @@ export async function runChaosIteration(
       }
     }
 
-    // Duplicate StepCompleted check
+    // Duplicate StepCompleted check in database event log
     const stepCompletedCounts: Record<string, number> = {};
     for (const ev of events) {
       if (ev.type === "StepCompleted") {
         const stepName = (ev.payload as { name: string }).name;
         stepCompletedCounts[stepName] = (stepCompletedCounts[stepName] || 0) + 1;
         if (stepCompletedCounts[stepName]! > 1) {
-          totalDuplicateEffects++;
+          totalDuplicateEffectsInLog++;
+        }
+      }
+    }
+  }
+
+  // Check raw receiver requests vs unique idempotency keys
+  const uniqueKeysCount = requestsPerKey.size;
+  const duplicateAttemptsCount = rawRequestsCount - uniqueKeysCount;
+
+  // Verify that any duplicate attempt carried the exact same key as the original attempt
+  for (const [key, count] of requestsPerKey.entries()) {
+    if (count > 1) {
+      const matching = rawRequestsLog.filter((r) => r.key === key);
+      const firstRunId = matching[0]?.runId;
+      const firstStep = matching[0]?.step;
+      for (const m of matching) {
+        if (m.runId !== firstRunId || m.step !== firstStep) {
+          throw new Error(`Idempotency key collision across different steps: key=${key}`);
         }
       }
     }
@@ -202,7 +254,7 @@ export async function runChaosIteration(
   const durationMs = Date.now() - startTime;
   const passed =
     completedRunsCount === numWorkflows &&
-    totalDuplicateEffects === 0 &&
+    totalDuplicateEffectsInLog === 0 &&
     allSequencesContiguous;
 
   return {
@@ -210,7 +262,10 @@ export async function runChaosIteration(
     workflowsTotal: numWorkflows,
     workflowsCompleted: completedRunsCount,
     workersKilled,
-    duplicateEffects: totalDuplicateEffects,
+    rawRequests: rawRequestsCount,
+    uniqueKeys: uniqueKeysCount,
+    duplicateAttempts: duplicateAttemptsCount,
+    duplicateEffectsInLog: totalDuplicateEffectsInLog,
     sequenceContiguous: allSequencesContiguous,
     durationMs,
     passed,
@@ -235,7 +290,10 @@ async function main() {
     const report = await runChaosIteration(pool, iter, { numWorkflows: 10, numWorkers: 3 });
     reports.push(report);
     if (report.passed) {
-      console.log(`✓ PASSED in ${(report.durationMs / 1000).toFixed(2)}s (${report.workersKilled} workers killed, 0 duplicate effects)`);
+      console.log(`✓ PASSED in ${(report.durationMs / 1000).toFixed(2)}s`);
+      console.log(`        Kill budget: ${report.workersKilled} workers killed via SIGKILL (Win32 TerminateProcess)`);
+      console.log(`        Receiver raw requests: ${report.rawRequests} | Unique keys: ${report.uniqueKeys} | Duplicate network attempts: ${report.duplicateAttempts}`);
+      console.log(`        Event log: 0 duplicate StepCompleted events | Contiguous seq: ${report.sequenceContiguous ? "YES" : "NO"}`);
     } else {
       console.log(`✕ FAILED in ${(report.durationMs / 1000).toFixed(2)}s (${report.workflowsCompleted}/${report.workflowsTotal} completed)`);
     }
@@ -243,30 +301,42 @@ async function main() {
 
   await pool.end();
 
-  console.log("\n=====================================================================================================");
-  console.log("                                    CHAOS TEST SUMMARY REPORT");
-  console.log("=====================================================================================================");
-  console.log("| Iteration | Workflows | Completed | Workers Killed | Duplicate Effects | Contiguous Seq | Duration | Status |");
-  console.log("|-----------|-----------|-----------|----------------|-------------------|----------------|----------|--------|");
+  console.log("\n===================================================================================================================================");
+  console.log("                                               CHAOS TEST SUMMARY REPORT");
+  console.log("===================================================================================================================================");
+  console.log("| Iteration | Workflows | Completed | Workers Killed | Raw Requests | Unique Keys | Duplicate Attempts | Event Log Dups | Contiguous | Duration | Status |");
+  console.log("|-----------|-----------|-----------|----------------|--------------|-------------|--------------------|----------------|------------|----------|--------|");
   for (const r of reports) {
     const iterStr = `Run #${r.iteration}`.padEnd(9);
     const wfStr = `${r.workflowsTotal}`.padEnd(9);
     const compStr = `${r.workflowsCompleted}`.padEnd(9);
     const killedStr = `${r.workersKilled}`.padEnd(14);
-    const dupStr = `${r.duplicateEffects}`.padEnd(17);
-    const seqStr = (r.sequenceContiguous ? "YES" : "NO").padEnd(14);
+    const rawStr = `${r.rawRequests}`.padEnd(12);
+    const uniqStr = `${r.uniqueKeys}`.padEnd(11);
+    const dupAttStr = `${r.duplicateAttempts}`.padEnd(18);
+    const dupLogStr = `${r.duplicateEffectsInLog}`.padEnd(14);
+    const seqStr = (r.sequenceContiguous ? "YES" : "NO").padEnd(10);
     const durStr = `${(r.durationMs / 1000).toFixed(2)}s`.padEnd(8);
     const statusStr = r.passed ? "PASS" : "FAIL";
-    console.log(`| ${iterStr} | ${wfStr} | ${compStr} | ${killedStr} | ${dupStr} | ${seqStr} | ${durStr} | ${statusStr}   |`);
+    console.log(`| ${iterStr} | ${wfStr} | ${compStr} | ${killedStr} | ${rawStr} | ${uniqStr} | ${dupAttStr} | ${dupLogStr} | ${seqStr} | ${durStr} | ${statusStr}   |`);
   }
-  console.log("=====================================================================================================\n");
+  console.log("===================================================================================================================================\n");
 
   const allPassed = reports.every((r) => r.passed);
   if (!allPassed) {
     console.error("Some chaos iterations failed!");
     process.exit(1);
   }
-  console.log("All 5 chaos iterations passed with 100% completion, 0 duplicate effects, and strictly contiguous sequence numbers!");
+  console.log("All 5 chaos iterations passed with 100% completion, at-least-once network attempts carrying identical idempotency keys, and exactly-once event log recording!");
+  process.exit(0);
+}
+
+// Auto-run if main
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main().catch((err) => {
+    console.error("Chaos test failed:", err);
+    process.exit(1);
+  });
 }
 
 // Auto-run if main

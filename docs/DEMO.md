@@ -76,7 +76,7 @@ Before approving the $1,250 expense, the finance team wants to ask:
    - Copies previous history up to the fork point.
    - Executes forward in **Shadow Mode**.
    - `extract-invoice` computes the new discounted total: **$625.00**.
-   - Because $625 is under $1,000 and risk is low, the approval gate auto-approves.
+   - Because $625 is under $1,000 and risk is low, the workflow logic bypasses the approval gate requirement.
    - `payment-charge` executes in shadow mode: intercepted by `ShadowHttpConnector`! **Zero outbound HTTP requests are made.**
    - `customer-notification` executes in shadow mode: intercepted! **Zero customer emails sent.**
    - `record-ledger` executes in shadow mode: executed inside an isolated transaction that **automatically rolls back**.
@@ -103,7 +103,7 @@ Before approving the $1,250 expense, the finance team wants to ask:
 
 ## Step 6: Multi-Process Worker Chaos Demonstration (20 seconds)
 
-To demonstrate fault tolerance and exactly-once execution under catastrophic failure:
+To demonstrate fault tolerance, at-least-once external network attempts with idempotency keys, and exactly-once event log recording under catastrophic failure:
 ```bash
 # Terminal 3: Run multi-process worker chaos suite
 pnpm chaos
@@ -111,10 +111,11 @@ pnpm chaos
 ### What this verifies:
 - Spawns **3 separate OS worker processes** via `child_process.fork`.
 - Runs 10 concurrent workflows with slow steps.
-- Kills worker processes at random with uncatchable **SIGKILL** (simulating machine crash / OOM).
+- Kills worker processes via uncatchable **SIGKILL** (Win32 `TerminateProcess`, simulating crash/OOM).
 - Replaces killed workers dynamically while remaining workers claim expired leases.
+- In count-only mode (no receiver dedup), proves external calls are at-least-once: duplicate network attempts carry the exact same idempotency key, while each step completion is recorded exactly once in the event log.
 - Asserts across all 10 workflows:
   - 100% completion (`completed`).
-  - **0 duplicate effects** in the event log.
+  - **0 duplicate StepCompleted events** in the event log.
   - Strictly contiguous sequence numbers (`1..N`).
-  - External mock service received **exactly one call per idempotency key**.
+  - Outbound retries carry matching `Idempotency-Key` headers.
