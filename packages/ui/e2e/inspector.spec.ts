@@ -3,7 +3,7 @@ import { mkdirSync, statSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { startServer } from "@durable/api";
-import { type Ctx, Engine, migrate } from "@durable/engine";
+import { type Ctx, Engine, loadEvents, migrate } from "@durable/engine";
 import { expect, test } from "@playwright/test";
 import pg from "pg";
 import { createServer, type ViteDevServer } from "vite";
@@ -203,4 +203,128 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   // 7. XSS Verification: window.__pwned must not be set
   const pwned = await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned);
   expect(pwned).toBeUndefined();
+});
+
+test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution diff, verify secrets redacted, and assert parent untouched", async ({
+  page,
+}) => {
+  page.on("console", (msg) => console.log("PAGE LOG:", msg.text()));
+  page.on("pageerror", (err) => console.log("PAGE ERROR:", err));
+
+  // 1. Snapshot Parent Run before fork in Postgres
+  const { rows: parentBeforeRuns } = await pool.query("SELECT * FROM runs WHERE id = $1", [
+    parentRunId,
+  ]);
+  const parentBeforeEvents = await loadEvents(pool, parentRunId);
+  const { rows: parentBeforeTasks } = await pool.query(
+    "SELECT * FROM tasks WHERE run_id = $1 ORDER BY id",
+    [parentRunId],
+  );
+
+  // 2. Navigate to Parent Run detail view
+  await page.goto("http://localhost:5173");
+  await page.waitForSelector('[data-testid="run-list-view"]');
+  const parentRow = page.locator(`[data-testid="run-row-${parentRunId}"]`);
+  await parentRow.click();
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // 3. Open Fork Modal from UI
+  const forkButton = page.locator('[data-testid="open-fork-modal-btn"]');
+  await expect(forkButton).toBeVisible();
+  await forkButton.click();
+
+  const forkModal = page.locator('[data-testid="fork-modal"]');
+  await expect(forkModal).toBeVisible();
+
+  // 4. Fill in edited input with planted secret and modified parameters
+  const jsonTextarea = page.locator('[data-testid="fork-json-textarea"]');
+  await jsonTextarea.fill(
+    JSON.stringify(
+      {
+        customNote: "ui-shadow-fork-edit",
+        secretToken: SECRET_INPUT_DATA,
+        overrideAmount: 7777,
+      },
+      null,
+      2,
+    ),
+  );
+
+  // 5. Fill in optional mock for external payment step
+  const mocksTextarea = page.locator('[data-testid="fork-mocks-textarea"]');
+  await mocksTextarea.fill(
+    JSON.stringify(
+      [
+        {
+          stepName: "step-external-payment",
+          result: { status: 200, chargeId: "ch_ui_fork_mock", simulated: true },
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+
+  // 6. Submit Fork form
+  const submitForkBtn = page.locator('[data-testid="submit-fork-btn"]');
+  await submitForkBtn.click();
+
+  // 7. Verify Success Card and get new fork run ID
+  const successCard = page.locator('[data-testid="fork-success-card"]');
+  await expect(successCard).toBeVisible();
+  const navigateToForkBtn = page.locator('[data-testid="navigate-to-fork-btn"]');
+  await expect(navigateToForkBtn).toBeVisible();
+
+  // 8. Click to navigate directly to the new Shadow Fork run
+  await navigateToForkBtn.click();
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // Verify on the fork run page
+  const forkH1 = await page.locator("h1").innerText();
+  expect(forkH1).not.toBe(parentRunId);
+
+  // Execute the newly created fork to populate its shadow run events
+  await engine.execute(forkH1);
+
+  // Refresh page to load latest execution events & diff
+  await page.reload();
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // 9. Switch to Execution Diff Tab
+  const diffTab = page.locator('[data-testid="tab-diff"]');
+  await expect(diffTab).toBeVisible();
+  await diffTab.click();
+
+  const diffView = page.locator('[data-testid="diff-view"]');
+  await expect(diffView).toBeVisible();
+
+  // Verify step diff cards exist and are aligned
+  const initStepDiff = page.locator('[data-testid="diff-step-step-initialize-0"]');
+  await expect(initStepDiff).toBeVisible();
+  await expect(initStepDiff).toContainText("Modified / Edited");
+
+  // Screenshot 5: Fork & Execution Diff View
+  const screenshot5 = resolve(screenshotsDir, "05-fork-and-diff-view.png");
+  await page.screenshot({ path: screenshot5, fullPage: true });
+  expect(statSync(screenshot5).size).toBeGreaterThan(0);
+
+  // 10. Security & Secret Redaction: Assert planted secrets are NOT in the DOM
+  const domText = await page.locator("body").innerText();
+  expect(domText).not.toContain(SECRET_HEADER_TOKEN);
+  expect(domText).not.toContain(SECRET_INPUT_DATA);
+  expect(domText).toContain("[REDACTED]");
+
+  // 11. Assert Parent Run in Database is 100% BYTE-IDENTICAL
+  const { rows: parentAfterRuns } = await pool.query("SELECT * FROM runs WHERE id = $1", [
+    parentRunId,
+  ]);
+  const parentAfterEvents = await loadEvents(pool, parentRunId);
+  const { rows: parentAfterTasks } = await pool.query(
+    "SELECT * FROM tasks WHERE run_id = $1 ORDER BY id",
+    [parentRunId],
+  );
+
+  expect(JSON.stringify(parentAfterRuns)).toBe(JSON.stringify(parentBeforeRuns));
+  expect(JSON.stringify(parentAfterEvents)).toBe(JSON.stringify(parentBeforeEvents));
+  expect(JSON.stringify(parentAfterTasks)).toBe(JSON.stringify(parentBeforeTasks));
 });

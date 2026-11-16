@@ -1,4 +1,4 @@
-import { AlertTriangle, Sparkles } from "lucide-react";
+import { AlertTriangle, GitFork, Sparkles } from "lucide-react";
 import type { EffectDiffItem, RunEvent } from "../types.js";
 import { formatDate } from "../utils/date.js";
 import { Badge } from "./Badge.js";
@@ -6,9 +6,10 @@ import { Badge } from "./Badge.js";
 interface EventDetailPanelProps {
   event: RunEvent | null;
   stepDiff?: EffectDiffItem | null;
+  onForkFromStep?: (event: RunEvent) => void;
 }
 
-export function EventDetailPanel({ event, stepDiff }: EventDetailPanelProps) {
+export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetailPanelProps) {
   if (!event) {
     return (
       <div className="h-full flex items-center justify-center p-8 text-center text-slate-500 text-sm border border-slate-800 rounded-lg bg-slate-900/40">
@@ -40,6 +41,17 @@ export function EventDetailPanel({ event, stepDiff }: EventDetailPanelProps) {
           <span className="font-semibold text-slate-200">{event.type}</span>
         </div>
         <div className="flex items-center gap-2">
+          {event.type === "StepCompleted" && onForkFromStep && (
+            <button
+              type="button"
+              data-testid="fork-from-step-btn"
+              onClick={() => onForkFromStep(event)}
+              className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-white bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 px-2.5 py-1 rounded cursor-pointer transition-colors"
+            >
+              <GitFork className="w-3.5 h-3.5" />
+              Fork from this step
+            </button>
+          )}
           {isReused && <Badge variant="cyan">reusedFromParent</Badge>}
           {isInputChanged && <Badge variant="warning">inputChangedFromParent</Badge>}
           {isMock && <Badge variant="purple">mock</Badge>}

@@ -55,7 +55,7 @@ export interface EffectDiffItem {
   occurrence: number;
   reusedFromParent: boolean;
   inputChangedFromParent: boolean;
-  status: "reused" | "modified" | "added" | "live";
+  status: "reused" | "modified" | "added" | "live" | "only-in-parent";
   parent: {
     seq?: number;
     input?: unknown;
@@ -259,6 +259,34 @@ export function buildEffectDiff(
       },
     });
   }
+
+  for (const parentStep of parentSteps) {
+    const shadowMatch = shadowSteps.find(
+      (s) => s.name === parentStep.name && s.occurrence === parentStep.occurrence,
+    );
+    if (!shadowMatch) {
+      diffItems.push({
+        stepName: parentStep.name,
+        occurrence: parentStep.occurrence,
+        reusedFromParent: false,
+        inputChangedFromParent: false,
+        status: "only-in-parent",
+        parent: {
+          seq: parentStep.seq,
+          input: parentStep.input,
+          result: parentStep.result,
+          effects: parentStep.effects,
+        },
+        shadow: null,
+      });
+    }
+  }
+
+  diffItems.sort((a, b) => {
+    const seqA = a.shadow?.seq ?? a.parent?.seq ?? 0;
+    const seqB = b.shadow?.seq ?? b.parent?.seq ?? 0;
+    return seqA - seqB;
+  });
 
   return diffItems;
 }
@@ -761,6 +789,7 @@ export function createApiApp(options: CreateApiOptions): Hono {
       return c.json(
         redactApiOutput({
           runId: forkedRunId,
+          forkRunId: forkedRunId,
           warnings,
         }),
         201,

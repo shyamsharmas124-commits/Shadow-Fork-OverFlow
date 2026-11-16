@@ -36,3 +36,39 @@ export async function getEffects(id: string): Promise<EffectDiffResponse> {
   }
   return res.json();
 }
+
+export async function forkRun(
+  runId: string,
+  payload: {
+    atSeq: number;
+    edit: {
+      input?: unknown;
+      result?: unknown;
+      mocks?: Array<{ stepName: string; occurrence?: number; result: unknown }>;
+    };
+  },
+  apiToken?: string,
+): Promise<{
+  runId: string;
+  forkRunId: string;
+  parentRunId?: string;
+  forkedFromSeq?: number;
+  warnings?: string[];
+}> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiToken) {
+    headers.Authorization = `Bearer ${apiToken}`;
+  }
+  const res = await fetch(`${API_BASE}/runs/${runId}/fork`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `Fork failed: ${res.statusText}`);
+  }
+  return res.json();
+}

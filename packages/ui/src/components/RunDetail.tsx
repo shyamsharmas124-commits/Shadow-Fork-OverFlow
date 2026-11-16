@@ -1,12 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Clock, GitFork, RefreshCw } from "lucide-react";
+import { ArrowLeft, Clock, GitFork, RefreshCw, SplitSquareVertical } from "lucide-react";
 import { useState } from "react";
 import { getEffects, getRun } from "../api.js";
 import type { RunEvent } from "../types.js";
 import { formatDate } from "../utils/date.js";
 import { ModeBadge, StatusBadge } from "./Badge.js";
+import { DiffView } from "./DiffView.js";
 import { EventDetailPanel } from "./EventDetailPanel.js";
 import { EventTimeline } from "./EventTimeline.js";
+import { ForkModal } from "./ForkModal.js";
 import { LineageGraph } from "./LineageGraph.js";
 
 interface RunDetailProps {
@@ -17,6 +19,9 @@ interface RunDetailProps {
 
 export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
   const [selectedEvent, setSelectedEvent] = useState<RunEvent | null>(null);
+  const [isForkModalOpen, setIsForkModalOpen] = useState<boolean>(false);
+  const [forkTargetEvent, setForkTargetEvent] = useState<RunEvent | null>(null);
+  const [activeTab, setActiveTab] = useState<"timeline" | "diff">("timeline");
 
   const {
     data: run,
@@ -63,6 +68,11 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
         })
       : null;
 
+  const handleOpenForkFromEvent = (event: RunEvent) => {
+    setForkTargetEvent(event);
+    setIsForkModalOpen(true);
+  };
+
   return (
     <div className="flex flex-col gap-6" data-testid="run-detail-view">
       {/* Top action bar */}
@@ -76,14 +86,28 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           <ArrowLeft className="w-4 h-4" />
           Back to runs list
         </button>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded border border-slate-800 bg-slate-900 cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="open-fork-modal-btn"
+            onClick={() => {
+              setForkTargetEvent(activeEvent?.type === "StepCompleted" ? activeEvent : null);
+              setIsForkModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 text-xs text-white bg-purple-600 hover:bg-purple-500 px-3 py-1.5 rounded font-medium cursor-pointer shadow-md shadow-purple-950/40"
+          >
+            <GitFork className="w-3.5 h-3.5" />
+            Fork Run
+          </button>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded border border-slate-800 bg-slate-900 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Fork Provenance Banner */}
@@ -160,27 +184,67 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
       {/* Lineage Graph */}
       <LineageGraph run={run} onSelectRun={onSelectRun} />
 
-      {/* Timeline & Detail Split */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
-            Event Timeline ({run.events.length})
-          </h2>
-          <EventTimeline
-            events={run.events}
-            selectedSeq={activeEvent?.seq ?? null}
-            onSelectEvent={setSelectedEvent}
-            diffSteps={effects?.steps}
-          />
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
-            Event Inspection & Diff
-          </h2>
-          <EventDetailPanel event={activeEvent} stepDiff={activeStepDiff} />
-        </div>
+      {/* View Tabs */}
+      <div className="flex items-center gap-4 border-b border-slate-800 pt-2">
+        <button
+          type="button"
+          data-testid="tab-timeline"
+          onClick={() => setActiveTab("timeline")}
+          className={`pb-3 px-3 text-xs font-semibold border-b-2 cursor-pointer transition-colors ${
+            activeTab === "timeline"
+              ? "border-purple-500 text-purple-400"
+              : "border-transparent text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          Timeline & Events ({run.events.length})
+        </button>
+        {effects?.steps && effects.steps.length > 0 && (
+          <button
+            type="button"
+            data-testid="tab-diff"
+            onClick={() => setActiveTab("diff")}
+            className={`pb-3 px-3 text-xs font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
+              activeTab === "diff"
+                ? "border-purple-500 text-purple-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <SplitSquareVertical className="w-3.5 h-3.5" />
+            Execution Diff ({effects.steps.length})
+          </button>
+        )}
       </div>
+
+      {activeTab === "timeline" ? (
+        /* Timeline & Detail Split */
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+              Event Timeline ({run.events.length})
+            </h2>
+            <EventTimeline
+              events={run.events}
+              selectedSeq={activeEvent?.seq ?? null}
+              onSelectEvent={setSelectedEvent}
+              diffSteps={effects?.steps}
+            />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+              Event Inspection & Details
+            </h2>
+            <EventDetailPanel
+              event={activeEvent}
+              stepDiff={activeStepDiff}
+              onForkFromStep={handleOpenForkFromEvent}
+            />
+          </div>
+        </div>
+      ) : (
+        /* Side-by-Side Diff View */
+        effects && <DiffView diff={effects} />
+      )}
 
       {/* Active Tasks Panel */}
       {run.tasks.length > 0 && (
@@ -218,6 +282,22 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           </div>
         </div>
       )}
+
+      {/* Fork Modal */}
+      <ForkModal
+        run={run}
+        initialEvent={forkTargetEvent}
+        isOpen={isForkModalOpen}
+        onClose={() => {
+          setIsForkModalOpen(false);
+          setForkTargetEvent(null);
+        }}
+        onForkSuccess={(forkRunId) => {
+          setIsForkModalOpen(false);
+          setForkTargetEvent(null);
+          onSelectRun(forkRunId);
+        }}
+      />
     </div>
   );
 }

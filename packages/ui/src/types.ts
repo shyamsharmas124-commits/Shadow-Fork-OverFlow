@@ -63,7 +63,7 @@ export interface EffectDiffItem {
   occurrence: number;
   reusedFromParent: boolean;
   inputChangedFromParent: boolean;
-  status: "reused" | "modified" | "added" | "live";
+  status: "reused" | "modified" | "added" | "live" | "only-in-parent";
   parent: {
     seq?: number;
     input?: unknown;
