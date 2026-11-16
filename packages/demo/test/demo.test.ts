@@ -1,11 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import pg from "pg";
 import { Engine, Worker } from "@durable/engine";
-import { startMockServers, type MockServers } from "../src/mocks.js";
-import {
-  invoiceProcessingWorkflow,
-  extractInvoiceFallback,
-} from "../src/invoiceWorkflow.js";
+import pg from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { extractInvoiceFallback, invoiceProcessingWorkflow } from "../src/invoiceWorkflow.js";
+import { type MockServers, startMockServers } from "../src/mocks.js";
 
 const { Pool } = pg;
 
@@ -16,7 +13,8 @@ describe("Milestone 6b - Demo Workflow & Shadow Fork Walkthrough", () => {
 
   beforeAll(async () => {
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable",
+      connectionString:
+        process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable",
     });
 
     await pool.query(`
@@ -101,7 +99,7 @@ Total: $1,500.00
     const events = await engine.getEvents(runId);
     const approvalReq = events.find((e) => e.type === "ApprovalRequested");
     expect(approvalReq).toBeDefined();
-    expect((approvalReq?.payload as any).name).toBe("invoice-manager-approval");
+    expect((approvalReq!.payload as any).name).toBe("invoice-manager-approval");
 
     const extractEvent = events.find(
       (e) => e.type === "StepCompleted" && (e.payload as any).name === "extract-invoice",
@@ -143,7 +141,7 @@ Total: $1,500.00
 
     const completedFork = await engine.getRun(forkId);
     expect(completedFork?.status).toBe("completed");
-    expect((completedFork?.result as any).invoice.amount).toBe(750);
+    expect((completedFork!.result as any).invoice.amount).toBe(750);
 
     // Assert that shadow fork produced 0 external charges and 0 external notifications
     expect(mocks.stats.charges.length).toBe(chargesBeforeFork);
@@ -167,7 +165,7 @@ Total: $1,500.00
 
     const completedParent = await engine.getRun(runId);
     expect(completedParent?.status).toBe("completed");
-    expect((completedParent?.result as any).payment.status).toBe("succeeded");
+    expect((completedParent!.result as any).payment.status).toBe("succeeded");
 
     // Assert that live run produced exactly 1 real charge and 1 real notification
     expect(mocks.stats.charges.length).toBe(chargesBeforeFork + 1);
@@ -197,7 +195,7 @@ Total: $9,999.00
       invoiceRawText: rawInvoice,
       customerId: "cust_reject",
       riskServiceUrl: mocks.riskServerUrl,
-      paymentServiceUrl: mocks.paymentServiceUrl,
+      paymentServiceUrl: mocks.paymentServerUrl,
       notificationServiceUrl: mocks.notificationServerUrl,
     });
 

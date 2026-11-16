@@ -253,6 +253,7 @@ describe("Milestone 6a - Approval Gate & Human-in-the-Loop", () => {
 
     // Events table is byte-for-byte identical (0 new events written)
     const eventsAfterReplay = await loadEvents(pool, runId);
+    expect(gateEvaluations).toBeGreaterThanOrEqual(1);
     expect(eventsAfterReplay.length).toBe(eventsBeforeReplay.length);
     expect(JSON.stringify(eventsAfterReplay)).toBe(JSON.stringify(eventsBeforeReplay));
 

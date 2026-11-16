@@ -1,7 +1,7 @@
-import pg from "pg";
 import { Engine, Worker } from "@durable/engine";
-import { startMockServers } from "./mocks.js";
+import pg from "pg";
 import { invoiceProcessingWorkflow } from "./invoiceWorkflow.js";
+import { startMockServers } from "./mocks.js";
 
 const { Pool } = pg;
 
@@ -10,7 +10,8 @@ async function main() {
   console.log("   DURABLE WORKFLOW ENGINE - SHADOW FORK DEMO");
   console.log("=============================================================\n");
 
-  const databaseUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable";
+  const databaseUrl =
+    process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable";
   const pool = new Pool({ connectionString: databaseUrl });
 
   // 1. Setup Database table for ledger
@@ -69,11 +70,13 @@ Total: $1,250.00
   const events = await engine.getEvents(parentRunId);
   const approvalEvent = events.find((e) => e.type === "ApprovalRequested");
   const extractEvent = events.find(
-    (e) => e.type === "StepCompleted" && (e.payload as any).name === "extract-invoice",
+    (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === "extract-invoice",
   );
 
   console.log(`      ⏸ Run status: ${parkedRun?.status.toUpperCase()}`);
-  console.log(`      ⏸ Approval Gate: "${(approvalEvent?.payload as any)?.name}" requested for amount $1,250.00.`);
+  console.log(
+    `      ⏸ Approval Gate: "${(approvalEvent?.payload as { name?: string })?.name}" requested for amount $1,250.00.`,
+  );
   console.log(`      ⏸ External charges made so far: ${mocks.stats.charges.length} (0 charges)`);
 
   // 5. Create Shadow Fork to test "What if we applied a VIP50 discount code?"
@@ -111,8 +114,12 @@ Total: $1,250.00
 
   const finishedFork = await engine.getRun(forkRunId);
   console.log(`      ✓ Shadow fork finished with status: ${finishedFork?.status.toUpperCase()}`);
-  console.log(`      ✓ Fork result amount: $${(finishedFork?.result as any)?.invoice?.amount?.toFixed(2)}`);
-  console.log(`      ✓ External charges made during shadow fork: 0 (prevented by shadow interceptor!)`);
+  console.log(
+    `      ✓ Fork result amount: $${(finishedFork?.result as { invoice?: { amount?: number } })?.invoice?.amount?.toFixed(2)}`,
+  );
+  console.log(
+    `      ✓ External charges made during shadow fork: 0 (prevented by shadow interceptor!)`,
+  );
   console.log(`      ✓ Total charges in payment gateway: ${mocks.stats.charges.length} (still 0)`);
 
   // 6. Approve the original live run
@@ -135,9 +142,13 @@ Total: $1,250.00
   if (completedParent?.error) {
     console.log(`      ✕ Live run error: ${completedParent.error}`);
   }
-  console.log(`      ✓ Real payment charge ID: ${(completedParent?.result as any)?.payment?.chargeId}`);
+  console.log(
+    `      ✓ Real payment charge ID: ${(completedParent?.result as { payment?: { chargeId?: string } })?.payment?.chargeId}`,
+  );
   console.log(`      ✓ Total charges processed in real gateway: ${mocks.stats.charges.length}`);
-  console.log(`      ✓ Total customer notifications delivered: ${mocks.stats.notifications.length}`);
+  console.log(
+    `      ✓ Total customer notifications delivered: ${mocks.stats.notifications.length}`,
+  );
 
   // 7. Verify ledger in database
   const ledgerRows = await pool.query(

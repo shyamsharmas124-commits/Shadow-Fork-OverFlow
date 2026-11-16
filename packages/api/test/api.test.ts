@@ -1231,7 +1231,10 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
 
       // Verify completed run detail
       const resDone = await app.request(`/runs/${runId}`);
-      const bodyDone = (await resDone.json()) as { status: string; events: Array<{ type: string }> };
+      const bodyDone = (await resDone.json()) as {
+        status: string;
+        events: Array<{ type: string }>;
+      };
       expect(bodyDone.status).toBe("completed");
       expect(bodyDone.events.some((e) => e.type === "ApprovalGranted")).toBe(true);
 

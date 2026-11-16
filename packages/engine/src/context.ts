@@ -619,8 +619,7 @@ export class RunContext implements Ctx {
       if (parentDecision) {
         // Ensure ApprovalRequested is recorded in fork history
         const hasRequested = this.history.some(
-          (e) =>
-            e.type === "ApprovalRequested" && (e.payload as { name: string }).name === name,
+          (e) => e.type === "ApprovalRequested" && (e.payload as { name: string }).name === name,
         );
         const client = await this.pool.connect();
         try {

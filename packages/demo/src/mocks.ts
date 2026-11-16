@@ -1,10 +1,16 @@
-import http from "node:http";
 import { randomUUID } from "node:crypto";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 export interface MockStats {
   riskChecks: Array<{ invoiceNumber: string; amount: number; vendor: string }>;
-  charges: Array<{ id: string; amount: number; customerId: string; idempotencyKey: string; description?: string }>;
+  charges: Array<{
+    id: string;
+    amount: number;
+    customerId: string;
+    idempotencyKey: string;
+    description?: string;
+  }>;
   refunds: Array<{ id: string; chargeId: string; amount: number; idempotencyKey: string }>;
   notifications: Array<{ customerId: string; message: string; invoiceNumber: string }>;
 }
@@ -25,8 +31,8 @@ export async function startMockServers(): Promise<MockServers> {
     notifications: [],
   };
 
-  const chargeCache = new Map<string, any>();
-  const refundCache = new Map<string, any>();
+  const chargeCache = new Map<string, unknown>();
+  const refundCache = new Map<string, unknown>();
 
   // 1. Risk Assessment Server
   const riskServer = http.createServer(async (req, res) => {
@@ -64,7 +70,8 @@ export async function startMockServers(): Promise<MockServers> {
     if (req.method === "POST" && req.url === "/charges") {
       try {
         const data = JSON.parse(body);
-        const idempotencyKey = (req.headers["idempotency-key"] as string) || data.idempotencyKey || "";
+        const idempotencyKey =
+          (req.headers["idempotency-key"] as string) || data.idempotencyKey || "";
 
         if (idempotencyKey && chargeCache.has(idempotencyKey)) {
           // Idempotent replay
@@ -100,7 +107,8 @@ export async function startMockServers(): Promise<MockServers> {
     if (req.method === "POST" && req.url === "/refunds") {
       try {
         const data = JSON.parse(body);
-        const idempotencyKey = (req.headers["idempotency-key"] as string) || data.idempotencyKey || "";
+        const idempotencyKey =
+          (req.headers["idempotency-key"] as string) || data.idempotencyKey || "";
 
         if (idempotencyKey && refundCache.has(idempotencyKey)) {
           res.writeHead(200, { "Content-Type": "application/json" });

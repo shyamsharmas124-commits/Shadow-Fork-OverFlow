@@ -87,7 +87,10 @@ export function extractInvoiceFallback(text: string, discountCode?: string): Ext
 /**
  * Extracts structured invoice data using Anthropic's Claude if available, or fallback.
  */
-export async function extractWithLLM(text: string, discountCode?: string): Promise<ExtractedInvoice> {
+export async function extractWithLLM(
+  text: string,
+  discountCode?: string,
+): Promise<ExtractedInvoice> {
   if (process.env.ANTHROPIC_API_KEY) {
     try {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -128,7 +131,13 @@ export async function extractWithLLM(text: string, discountCode?: string): Promi
 
       const toolBlock = response.content.find((c) => c.type === "tool_use");
       if (toolBlock && toolBlock.type === "tool_use") {
-        const input = toolBlock.input as any;
+        const input = toolBlock.input as {
+          vendor: string;
+          invoiceNumber: string;
+          customerId: string;
+          amount: number;
+          items: InvoiceItem[];
+        };
         let amount = input.amount;
         let discountApplied: string | undefined;
         if (discountCode === "VIP50") {
@@ -151,7 +160,10 @@ export async function extractWithLLM(text: string, discountCode?: string): Promi
       }
     } catch (err) {
       // Graceful fallback to deterministic parser
-      console.warn("[InvoiceWorkflow] Anthropic API call failed or rate-limited; using structured fallback:", err);
+      console.warn(
+        "[InvoiceWorkflow] Anthropic API call failed or rate-limited; using structured fallback:",
+        err,
+      );
     }
   }
 
@@ -249,7 +261,7 @@ export async function invoiceProcessingWorkflow(
         },
       });
 
-      const body = resp.body as any;
+      const body = resp.body as { id?: string; status?: string; amount?: number } | undefined;
       return {
         chargeId: body?.id ?? "ch_mock",
         status: body?.status ?? "succeeded",
@@ -286,7 +298,7 @@ export async function invoiceProcessingWorkflow(
         },
       });
 
-      const body = resp.body as any;
+      const body = resp.body as { delivered?: boolean } | undefined;
       return {
         delivered: Boolean(body?.delivered ?? true),
       };
