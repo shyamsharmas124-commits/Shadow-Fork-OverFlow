@@ -104,8 +104,8 @@ Building reliable business processes across distributed microservices, LLM APIs,
 ### 4. At-Least-Once External Delivery & Exactly-Once Event Log Recording
 - The event log records each step completion (`StepCompleted`) exactly once; external network calls are at-least-once.
 - If a worker crashes mid-task, the reaper (`reapTasks`) resets expired leases back to `pending`.
-- Every step receives an auto-generated idempotency key derived via `makeIdempotencyKey(runId, stepKey)`:
-  $$\text{idempotencyKey} = \text{runId} + ":" + \text{stepName}$$
+- Every step receives an auto-generated idempotency key derived via `makeIdempotencyKey(runId, stepKey, occurrence)`:
+  $$\text{idempotencyKey} = \text{runId} + ":" + \text{stepName} + ":" + \text{occurrence}$$
   (implemented at `packages/engine/src/context.ts:96-98` and assigned at line 301).
 - Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header on external network calls.
 - No test proves that external receivers deduplicate on Idempotency-Key; the engine only guarantees it sends the same key on a retry.
@@ -170,7 +170,7 @@ Every architectural and behavioral claim in this specification is backed by exec
 | **4.1** Event log has one StepCompleted per step; external calls can repeat with the same key | `kills worker with SIGKILL during post-request / pre-commit window: counting server receives exactly 2 requests with identical Idempotency-Key and DB records exactly 1 StepCompleted` | `packages/engine/test/duplicate-window.test.ts:62` | Verified PASS |
 | **4.2** Live HTTP connector request carries `Idempotency-Key` header | `live HTTP connector: request carries Idempotency-Key header received by server` | `packages/engine/test/shadow.test.ts:153` | Verified PASS |
 | **4.3** Reaper resets expired leases to `pending` | `reaper returns expired running tasks to pending`<br/>`reaper reschedules task when lease expires while step is running` | `packages/engine/test/leasing.test.ts:65`<br/>`packages/engine/test/reliability.test.ts:373` | Verified PASS |
-| **4.4** Auto-generated idempotency key (`${runId}:${stepKey}`) | `idempotency keys are unique per run and differ between parent and fork`<br/>`pins idempotency key derivation: same run+step gives the same key across a retry; different runs give different keys` | `packages/engine/test/fork.test.ts:452`<br/>`packages/engine/test/reliability.test.ts:370` | Verified PASS |
+| **4.4** Auto-generated idempotency key (`${runId}:${stepKey}:${occurrence}`) | `idempotency keys are unique per run and differ between parent and fork`<br/>`pins idempotency key derivation: same run+step+occurrence gives the same key across a retry; different runs give different keys`<br/>`occurrence-indexed idempotency keys: two occurrences get different keys; retry of occurrence 1 keeps occurrence 1's key` | `packages/engine/test/fork.test.ts:452`<br/>`packages/engine/test/reliability.test.ts:370`<br/>`packages/engine/test/reliability.test.ts:424` | Verified PASS |
 | **4.5** Outbound HTTP connectors pass `Idempotency-Key` header without redaction | `does not redact Idempotency-Key headers while redacting other sensitive headers` | `packages/engine/test/shadow.test.ts:1330` | Verified PASS |
 | **5.1** `waitForApproval` parks run with status `running` | `1. park/resume: workflow requests approval, parks run without tasks, and resumes to completion on approval` | `packages/engine/test/approval.test.ts:84` | Verified PASS |
 | **5.2** While parked: 0 leases held, 0 pending tasks | `1. park/resume: workflow requests approval, parks run without tasks, and resumes to completion on approval`<br/>`4. worker crash while parked: worker dies/reaps, run remains cleanly parked with 0 tasks picked up` | `packages/engine/test/approval.test.ts:84`<br/>`packages/engine/test/approval.test.ts:233` | Verified PASS |

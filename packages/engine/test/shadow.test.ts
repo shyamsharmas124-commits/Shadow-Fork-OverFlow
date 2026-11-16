@@ -190,10 +190,10 @@ describe("Milestone 4b - Shadow Mode", () => {
       const outcome = await engine.execute(runId);
       expect(outcome.status).toBe("completed");
 
-      // Verify server received exact idempotency key: runId:payment-step
-      const expectedKey = makeIdempotencyKey(runId, "payment-step");
+      // Verify server received exact idempotency key: runId:payment-step:occurrence
+      const expectedKey = makeIdempotencyKey(runId, "payment-step", 0);
       expect(receivedIdempotencyKey).toBe(expectedKey);
-      expect(receivedIdempotencyKey).toBe(`${runId}:payment-step`);
+      expect(receivedIdempotencyKey).toBe(`${runId}:payment-step:0`);
 
       await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
     } finally {

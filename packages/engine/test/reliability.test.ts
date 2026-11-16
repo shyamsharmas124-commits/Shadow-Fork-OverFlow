@@ -356,26 +356,32 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     const out2 = await engine.execute(runId2);
     expect(out2.status).toBe("completed");
 
-    const key1 = makeIdempotencyKey(runId1, "charge-payment");
-    const key2 = makeIdempotencyKey(runId2, "charge-payment");
+    const key1 = makeIdempotencyKey(runId1, "charge-payment", 0);
+    const key2 = makeIdempotencyKey(runId2, "charge-payment", 0);
 
-    expect(key1).toBe(`${runId1}:charge-payment`);
-    expect(key2).toBe(`${runId2}:charge-payment`);
+    expect(key1).toBe(`${runId1}:charge-payment:0`);
+    expect(key2).toBe(`${runId2}:charge-payment:0`);
     expect(key1).not.toBe(key2);
 
     expect(recordedKeys[key1]).toBe(key1);
     expect(recordedKeys[key2]).toBe(key2);
   });
 
-  it("pins idempotency key derivation: same run+step gives the same key across a retry; different runs give different keys", async () => {
+  it("pins idempotency key derivation: same run+step+occurrence gives the same key across a retry; different runs give different keys", async () => {
     const runId1 = "run-test-uuid-1111";
     const runId2 = "run-test-uuid-2222";
     const stepName = "charge-card";
 
-    // 1. Direct function contract: makeIdempotencyKey(runId, stepKey) === `${runId}:${stepKey}`
-    expect(makeIdempotencyKey(runId1, stepName)).toBe(`${runId1}:${stepName}`);
-    expect(makeIdempotencyKey(runId2, stepName)).toBe(`${runId2}:${stepName}`);
-    expect(makeIdempotencyKey(runId1, stepName)).not.toBe(makeIdempotencyKey(runId2, stepName));
+    // 1. Direct function contract: makeIdempotencyKey(runId, stepKey, occurrence) === `${runId}:${stepKey}:${occurrence}`
+    expect(makeIdempotencyKey(runId1, stepName, 0)).toBe(`${runId1}:${stepName}:0`);
+    expect(makeIdempotencyKey(runId2, stepName, 0)).toBe(`${runId2}:${stepName}:0`);
+    expect(makeIdempotencyKey(runId1, stepName, 1)).toBe(`${runId1}:${stepName}:1`);
+    expect(makeIdempotencyKey(runId1, stepName, 0)).not.toBe(
+      makeIdempotencyKey(runId2, stepName, 0),
+    );
+    expect(makeIdempotencyKey(runId1, stepName, 0)).not.toBe(
+      makeIdempotencyKey(runId1, stepName, 1),
+    );
 
     // 2. Execution-level verification across step retries
     const keysSeenOnAttempts: string[] = [];
@@ -409,16 +415,161 @@ describe("Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys", (
     expect(attemptCount).toBe(2);
     expect(keysSeenOnAttempts.length).toBe(2);
 
-    // Same run + step produces identical idempotency key across retries
-    expect(keysSeenOnAttempts[0]).toBe(`${liveRunId}:${stepName}`);
-    expect(keysSeenOnAttempts[1]).toBe(`${liveRunId}:${stepName}`);
+    // Same run + step + occurrence produces identical idempotency key across retries
+    expect(keysSeenOnAttempts[0]).toBe(`${liveRunId}:${stepName}:0`);
+    expect(keysSeenOnAttempts[1]).toBe(`${liveRunId}:${stepName}:0`);
     expect(keysSeenOnAttempts[0]).toBe(keysSeenOnAttempts[1]);
 
     // Different run produces different idempotency key
     const otherRunId = await engine.startRun(wfType, {});
-    const otherKey = makeIdempotencyKey(otherRunId, stepName);
-    expect(otherKey).toBe(`${otherRunId}:${stepName}`);
+    const otherKey = makeIdempotencyKey(otherRunId, stepName, 0);
+    expect(otherKey).toBe(`${otherRunId}:${stepName}:0`);
     expect(otherKey).not.toBe(keysSeenOnAttempts[0]);
+  });
+
+  it("occurrence-indexed idempotency keys: two occurrences get different keys; retry of occurrence 1 keeps occurrence 1's key", async () => {
+    const keysSeen: { occ0: string[]; occ1: string[] } = {
+      occ0: [],
+      occ1: [],
+    };
+    let occ1Attempts = 0;
+    const wfType = `wf_multi_occ_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wfType]: async (ctx: Ctx) => {
+        // Occurrence 0
+        await ctx.step(
+          "transfer-funds",
+          async (_inp, sctx) => {
+            keysSeen.occ0.push(sctx.idempotencyKey);
+            return { transferred: 100 };
+          },
+          {},
+        );
+
+        // Occurrence 1 (fails once, retries, then succeeds)
+        await ctx.step(
+          "transfer-funds",
+          async (_inp, sctx) => {
+            occ1Attempts++;
+            keysSeen.occ1.push(sctx.idempotencyKey);
+            if (occ1Attempts === 1) {
+              throw new Error("transient network failure on occurrence 1 attempt 1");
+            }
+            return { transferred: 200 };
+          },
+          {},
+          { maxAttempts: 3, initialBackoffMs: 0 },
+        );
+      },
+    });
+
+    const runId = await engine.startRun(wfType, {});
+    // Attempt 1: occurrence 0 succeeds, occurrence 1 fails and schedules retry
+    const res1 = await engine.execute(runId);
+    expect(res1.status).toBe("running");
+    expect(occ1Attempts).toBe(1);
+
+    // Attempt 2: occurrence 0 returned from replay, occurrence 1 retries live and succeeds
+    const res2 = await engine.execute(runId);
+    expect(res2.status).toBe("completed");
+    expect(occ1Attempts).toBe(2);
+
+    // Assert: two occurrences get different keys
+    const occ0Key = `${runId}:transfer-funds:0`;
+    const occ1Key = `${runId}:transfer-funds:1`;
+    expect(keysSeen.occ0).toEqual([occ0Key]);
+    expect(occ0Key).not.toBe(occ1Key);
+
+    // Assert: retry of occurrence 1 keeps occurrence 1's key exactly
+    expect(keysSeen.occ1.length).toBe(2);
+    expect(keysSeen.occ1[0]).toBe(occ1Key);
+    expect(keysSeen.occ1[1]).toBe(occ1Key);
+    expect(keysSeen.occ1[0]).toBe(keysSeen.occ1[1]);
+  });
+
+  it("fork idempotency keys differ from parent run for matching step and occurrence", async () => {
+    const parentKeys: string[] = [];
+    const forkKeys: string[] = [];
+    const wfType = `wf_fork_idem_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wfType]: async (ctx: Ctx) => {
+        await ctx.step("step-one", () => ({ done: true }), {});
+        await ctx.step(
+          "external-call",
+          async (_inp, sctx) => {
+            if (sctx.idempotencyKey.includes("fork")) {
+              forkKeys.push(sctx.idempotencyKey);
+            } else {
+              parentKeys.push(sctx.idempotencyKey);
+            }
+            return { status: "ok" };
+          },
+          {},
+        );
+      },
+    });
+
+    const parentRunId = await engine.startRun(wfType, {});
+    await engine.execute(parentRunId);
+
+    // Fork at step 2 (occurrence 0 of external-call)
+    const forkedRunId = await engine.fork(parentRunId, 2, { input: {} });
+    await engine.execute(forkedRunId);
+
+    expect(parentRunId).not.toBe(forkedRunId);
+    expect(makeIdempotencyKey(parentRunId, "external-call", 0)).toBe(
+      `${parentRunId}:external-call:0`,
+    );
+    expect(makeIdempotencyKey(forkedRunId, "external-call", 0)).toBe(
+      `${forkedRunId}:external-call:0`,
+    );
+    expect(makeIdempotencyKey(parentRunId, "external-call", 0)).not.toBe(
+      makeIdempotencyKey(forkedRunId, "external-call", 0),
+    );
+  });
+
+  it("repeated step names in one run and in a loop receive distinct occurrence-indexed idempotency keys", async () => {
+    const keys: Record<string, string> = {};
+    const wfType = `repeated_step_fixed_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wfType]: async (ctx: Ctx) => {
+        await ctx.step(
+          "charge-card",
+          async (_inp, sctx) => {
+            keys.sequential_1 = sctx.idempotencyKey;
+            return { ok: true };
+          },
+          {},
+        );
+        await ctx.step(
+          "charge-card",
+          async (_inp, sctx) => {
+            keys.sequential_2 = sctx.idempotencyKey;
+            return { ok: true };
+          },
+          {},
+        );
+        for (let i = 0; i < 2; i++) {
+          await ctx.step(
+            "loop-step",
+            async (_inp, sctx) => {
+              keys[`loop_${i}`] = sctx.idempotencyKey;
+              return { i };
+            },
+            {},
+          );
+        }
+      },
+    });
+
+    const runId = await engine.startRun(wfType, {});
+    await engine.execute(runId);
+    expect(keys.sequential_1).toBe(`${runId}:charge-card:0`);
+    expect(keys.sequential_2).toBe(`${runId}:charge-card:1`);
+    expect(keys.sequential_1).not.toBe(keys.sequential_2);
+    expect(keys.loop_0).toBe(`${runId}:loop-step:0`);
+    expect(keys.loop_1).toBe(`${runId}:loop-step:1`);
+    expect(keys.loop_0).not.toBe(keys.loop_1);
   });
 
   it("step timeout aborts step execution and counts as a failed attempt", async () => {

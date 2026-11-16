@@ -93,8 +93,8 @@ const describe = (e: StoredEvent): string =>
 
 const jsonRoundTrip = <T>(v: T): T => JSON.parse(JSON.stringify(v ?? null)) as T;
 
-export function makeIdempotencyKey(runId: string, stepKey: string): string {
-  return `${runId}:${stepKey}`;
+export function makeIdempotencyKey(runId: string, stepKey: string, occurrence = 0): string {
+  return `${runId}:${stepKey}:${occurrence}`;
 }
 
 /**
@@ -298,7 +298,7 @@ export class RunContext implements Ctx {
     }
 
     const currentAttempt = Math.max(taskAttempt, failedAttempts + 1);
-    const idempotencyKey = makeIdempotencyKey(this.runId, name);
+    const idempotencyKey = makeIdempotencyKey(this.runId, name, occurrence);
 
     let leaseLost = false;
     const heartbeatTimer = setInterval(async () => {

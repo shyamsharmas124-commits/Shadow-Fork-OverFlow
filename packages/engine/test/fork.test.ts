@@ -498,8 +498,8 @@ describe("Milestone 4a - Workflow Forking without Shadow Mode", () => {
     );
     expect(forkRows.length).toBeGreaterThanOrEqual(1);
 
-    // Idempotency keys format is `${runId}:${stepKey}`
+    // Idempotency keys format is `${runId}:${stepKey}:${occurrence}`
     expect(forkedRunId).not.toBe(parentRunId);
-    expect(`${forkedRunId}:step2`).not.toBe(`${parentRunId}:step2`);
+    expect(`${forkedRunId}:step2:0`).not.toBe(`${parentRunId}:step2:0`);
   });
 });
