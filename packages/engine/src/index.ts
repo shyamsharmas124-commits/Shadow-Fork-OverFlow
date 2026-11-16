@@ -41,6 +41,7 @@ export {
   type ForkMocksOption,
   type ForkOptions,
   type RunOutcome,
+  type RunRow,
   type WorkflowFn,
 } from "./engine.js";
 export {

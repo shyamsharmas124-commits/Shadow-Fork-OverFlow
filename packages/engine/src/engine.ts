@@ -46,6 +46,20 @@ function normalizeMocks(mocks?: ForkMocksOption): ForkMockItem[] | undefined {
   return undefined;
 }
 
+export interface RunRow {
+  id: string;
+  workflow_type: string;
+  status: "running" | "completed" | "failed";
+  mode: "live" | "shadow";
+  input: unknown;
+  result?: unknown;
+  error?: string | null;
+  created_at: Date;
+  parent_run_id: string | null;
+  forked_from_seq: number | null;
+  fork_edit: unknown;
+}
+
 export type RunOutcome =
   | { status: "completed"; result: unknown }
   | { status: "failed"; error: string }
@@ -56,7 +70,7 @@ export type ExecuteOptions = RunContextOptions & { clock?: Clock; resumeFailed?:
 export class Engine {
   constructor(
     private readonly pool: Pool,
-    private readonly workflows: Record<string, WorkflowFn>,
+    private readonly workflows: Record<string, WorkflowFn> = {},
     private readonly clock: Clock = new SystemClock(),
   ) {}
 
@@ -70,6 +84,47 @@ export class Engine {
 
   getWorkflowTypes(): string[] {
     return Object.keys(this.workflows);
+  }
+
+  async getRun(runId: string): Promise<RunRow | null> {
+    const { rows } = await this.pool.query<{
+      id: string;
+      workflow_type: string;
+      status: "running" | "completed" | "failed";
+      mode: "live" | "shadow";
+      input: unknown;
+      parent_run_id: string | null;
+      forked_from_seq: number | null;
+      fork_edit: unknown;
+      created_at: Date;
+    }>(
+      `SELECT id, workflow_type, status, mode, input, parent_run_id, forked_from_seq, fork_edit, created_at FROM runs WHERE id = $1`,
+      [runId],
+    );
+    const r = rows[0];
+    if (!r) return null;
+
+    const events = await loadEvents(this.pool, runId);
+    const completedEvent = events.find((e) => e.type === "RunCompleted");
+    const failedEvent = events.find((e) => e.type === "RunFailed");
+
+    return {
+      id: r.id,
+      workflow_type: r.workflow_type,
+      status: r.status,
+      mode: r.mode,
+      input: r.input,
+      result: (completedEvent?.payload as any)?.result,
+      error: (failedEvent?.payload as any)?.error ?? null,
+      parent_run_id: r.parent_run_id,
+      forked_from_seq: r.forked_from_seq,
+      fork_edit: r.fork_edit,
+      created_at: r.created_at,
+    };
+  }
+
+  async getEvents(runId: string): Promise<StoredEvent[]> {
+    return loadEvents(this.pool, runId);
   }
 
   register(workflowType: string, fn: WorkflowFn): void {

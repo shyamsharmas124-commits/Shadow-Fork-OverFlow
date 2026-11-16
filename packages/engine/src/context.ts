@@ -684,19 +684,11 @@ export class RunContext implements Ctx {
           type: "ApprovalRequested",
           payload: { name, payload: payload ?? null },
         });
-        // If there was an active task claimed, complete it so no task remains pending
-        if (this.options.activeTask) {
-          await completeTask(
-            client,
-            this.options.activeTask.id,
-            this.options.workerId ?? "default-worker",
-          );
-        } else {
-          await client.query(
-            `UPDATE tasks SET status = 'completed' WHERE run_id = $1 AND status = 'pending'`,
-            [this.runId],
-          );
-        }
+        // Ensure all tasks for this run are completed while parked
+        await client.query(
+          `UPDATE tasks SET status = 'completed', lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
+          [this.runId],
+        );
         await client.query("COMMIT");
       } catch (err) {
         await client.query("ROLLBACK").catch(() => {});
@@ -704,16 +696,10 @@ export class RunContext implements Ctx {
       } finally {
         client.release();
       }
-    } else if (this.options.activeTask) {
-      await completeTask(
-        this.pool,
-        this.options.activeTask.id,
-        this.options.workerId ?? "default-worker",
-      ).catch(() => {});
     } else {
       await this.pool
         .query(
-          `UPDATE tasks SET status = 'completed' WHERE run_id = $1 AND status = 'pending'`,
+          `UPDATE tasks SET status = 'completed', lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
           [this.runId],
         )
         .catch(() => {});
