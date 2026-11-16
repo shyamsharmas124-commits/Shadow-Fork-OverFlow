@@ -1,9 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import {
+  appendEvent,
   type Engine,
   type ForkEdit,
   type ForkMocksOption,
   loadEvents,
+  reapTasks,
   redactApiOutput,
   type StoredEvent,
 } from "@durable/engine";
@@ -33,8 +35,19 @@ export function safeCompareTokens(provided: string, expected: string): boolean {
 
 export function isLoopback(host?: string): boolean {
   if (!host) return true;
-  const h = host.toLowerCase().trim();
-  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h.startsWith("127.");
+  let h = host.toLowerCase().trim();
+  // Handle bracketed IPv6: [::1]:3000 or [::1] -> ::1
+  if (h.startsWith("[")) {
+    const bracketEnd = h.indexOf("]");
+    if (bracketEnd !== -1) {
+      h = h.slice(1, bracketEnd);
+    }
+  } else if (h.includes(":") && !h.includes("::")) {
+    // IPv4 or hostname with port: 127.0.0.1:3000 -> 127.0.0.1, localhost:3000 -> localhost
+    h = h.split(":")[0]!;
+  }
+  if (h === "localhost" || h === "::1") return true;
+  return /^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(h);
 }
 
 export interface EffectDiffItem {
@@ -315,6 +328,15 @@ export function createApiApp(options: CreateApiOptions): Hono {
 
   const app = new Hono();
 
+  // DNS Rebinding Protection: validate Host header for ALL routes
+  app.use("*", async (c, next) => {
+    const rawHost = c.req.header("host") || new URL(c.req.url).host;
+    if (!rawHost || !isLoopback(rawHost)) {
+      return c.json({ error: "Forbidden: invalid Host header (DNS rebinding protection)" }, 403);
+    }
+    await next();
+  });
+
   // Strict CORS origin configuration: only configured origin is allowed
   app.use(
     "*",
@@ -358,18 +380,43 @@ export function createApiApp(options: CreateApiOptions): Hono {
   // Health check
   app.get("/health", (c) => c.json({ status: "ok" }));
 
-  // Helper endpoint to start a new run
+  // POST /runs: Trigger a registered workflow
+  const StartRunSchema = z.object({
+    workflowType: z.string().min(1, "workflowType must be a non-empty string"),
+    input: z.unknown().optional(),
+  });
+
   app.post("/runs", async (c) => {
-    let body: { workflowType?: string; input?: unknown };
+    let rawBody: unknown;
     try {
-      body = await c.req.json();
+      rawBody = await c.req.json();
     } catch {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
-    if (!body?.workflowType) {
-      return c.json({ error: "Missing workflowType in request body" }, 400);
+
+    const parseResult = StartRunSchema.safeParse(rawBody);
+    if (!parseResult.success) {
+      return c.json(
+        {
+          error: "Validation failed",
+          issues: parseResult.error.issues,
+        },
+        400,
+      );
     }
-    const runId = await engine.startRun(body.workflowType, body.input);
+
+    const { workflowType, input } = parseResult.data;
+    const registeredTypes = engine.getWorkflowTypes();
+    if (!registeredTypes.includes(workflowType)) {
+      return c.json(
+        {
+          error: `Unknown workflow type: '${workflowType}'. Registered workflow types: [${registeredTypes.join(", ")}]`,
+        },
+        400,
+      );
+    }
+
+    const runId = await engine.startRun(workflowType, input);
     return c.json(redactApiOutput({ runId }), 201);
   });
 
@@ -410,6 +457,14 @@ export function createApiApp(options: CreateApiOptions): Hono {
     const limitPlaceholder = `$${params.length}`;
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // Calculate total count matching filters
+    const countParams = conditions.length > 0 ? params.slice(0, conditions.length) : [];
+    const { rows: countRows } = await pool.query<{ count: string }>(
+      `SELECT count(*) FROM runs r ${whereClause}`,
+      countParams,
+    );
+    const total = Number.parseInt(countRows[0]?.count ?? "0", 10);
 
     const { rows } = await pool.query<{
       id: string;
@@ -470,7 +525,8 @@ export function createApiApp(options: CreateApiOptions): Hono {
       };
     });
 
-    return c.json(redactApiOutput(result));
+    c.header("X-Total-Count", String(total));
+    return c.json(redactApiOutput({ runs: result, total }));
   });
 
   /**
@@ -520,18 +576,23 @@ export function createApiApp(options: CreateApiOptions): Hono {
     );
 
     const startedEvent = events.find((e) => e.type === "RunStarted");
-    const completedEvent = events.find((e) => e.type === "RunCompleted" || e.type === "RunFailed");
+    const lastResumedIdx = events.map((e) => e.type).lastIndexOf("RunResumed");
+    const searchSlice = lastResumedIdx !== -1 ? events.slice(lastResumedIdx + 1) : events;
+    const completedEvent = searchSlice.find(
+      (e) => e.type === "RunCompleted" || e.type === "RunFailed",
+    );
 
     const startedAt = startedEvent?.createdAt ?? run.created_at;
     const completedAt = completedEvent?.createdAt ?? null;
     const durationMs = completedAt
       ? new Date(completedAt).getTime() - new Date(startedAt).getTime()
       : null;
+    const currentStatus = lastResumedIdx !== -1 && !completedEvent ? "running" : run.status;
 
     const responseData = {
       id: run.id,
       workflowType: run.workflow_type,
-      status: run.status,
+      status: currentStatus,
       mode: run.mode,
       input: run.input,
       parentRunId: run.parent_run_id,
@@ -713,47 +774,83 @@ export function createApiApp(options: CreateApiOptions): Hono {
   /**
    * 5. POST /runs/:id/resume
    * Resumes failed or stalled run.
-   * Serialized per runId via Postgres advisory locks to ensure simultaneous resume calls
-   * produce exactly 1 task & 1 execution.
+   * Serialized per runId via Postgres transaction-level advisory locks (pg_advisory_xact_lock)
+   * to ensure simultaneous resume calls produce exactly 1 task & 1 execution, and no leaked locks.
    */
   app.post("/runs/:id/resume", async (c) => {
     const id = c.req.param("id");
 
     const client = await pool.connect();
+    let shouldExecute = false;
     try {
-      // Advisory lock serialized per run ID
-      await client.query(`SELECT pg_advisory_lock(hashtext($1))`, [id]);
-      try {
-        const { rows: runRows } = await client.query<{
-          id: string;
-          workflow_type: string;
-          status: string;
-          mode: string;
-        }>(`SELECT id, workflow_type, status, mode FROM runs WHERE id = $1`, [id]);
+      await client.query("BEGIN");
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [id]);
 
-        const run = runRows[0];
-        if (!run) {
-          return c.json({ error: `Run not found: ${id}` }, 404);
-        }
+      const { rows: runRows } = await client.query<{
+        id: string;
+        workflow_type: string;
+        status: string;
+        mode: string;
+      }>(`SELECT id, workflow_type, status, mode FROM runs WHERE id = $1`, [id]);
 
-        if (run.status === "completed") {
-          return c.json(
-            redactApiOutput({
-              success: true,
-              runId: id,
-              status: "completed",
-              message: "Run is already completed",
-            }),
-          );
-        }
+      const run = runRows[0];
+      if (!run) {
+        await client.query("ROLLBACK");
+        return c.json({ error: `Run not found: ${id}` }, 404);
+      }
 
-        await engine.reap();
+      if (run.status === "completed") {
+        await client.query("COMMIT");
+        return c.json(
+          redactApiOutput({
+            success: true,
+            runId: id,
+            status: "completed",
+            message: "Run is already completed",
+          }),
+        );
+      }
 
+      if (run.status === "running") {
+        await client.query("COMMIT");
+        shouldExecute = false;
+      } else {
+        await reapTasks(
+          client,
+          undefined,
+          engine.getWorkflowTypes().length > 0 ? engine.getWorkflowTypes() : undefined,
+        );
+
+        const currentEvents = await loadEvents(client, id);
+        const last = currentEvents[currentEvents.length - 1];
+
+        await appendEvent(client, id, {
+          type: "RunResumed",
+          payload: {
+            fromSeq: last?.seq ?? 0,
+            resumedAt: new Date().toISOString(),
+          },
+        });
+
+        await client.query(`UPDATE runs SET status = 'running' WHERE id = $1`, [id]);
         await client.query(
-          `UPDATE tasks SET run_at = now() WHERE run_id = $1 AND status = 'pending' AND run_at > now()`,
+          `UPDATE tasks SET status = 'pending', attempt = 0, run_at = now(), lease_owner = NULL, lease_expires_at = NULL WHERE run_id = $1 AND status != 'completed'`,
           [id],
         );
 
+        await client.query("COMMIT");
+        shouldExecute = true;
+      }
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(redactApiOutput({ error: message }), 500);
+    } finally {
+      client.release();
+    }
+
+    if (shouldExecute) {
+      try {
         const outcome = await engine.execute(id, { resumeFailed: true });
 
         return c.json(
@@ -764,14 +861,59 @@ export function createApiApp(options: CreateApiOptions): Hono {
             outcome,
           }),
         );
-      } finally {
-        await client.query(`SELECT pg_advisory_unlock(hashtext($1))`, [id]).catch(() => {});
+      } catch (err) {
+        // If fencing error or conflict occurred, wait briefly for concurrent worker to finalize
+        for (let i = 0; i < 20; i++) {
+          const { rows: recheck } = await pool.query<{ status: string }>(
+            `SELECT status FROM runs WHERE id = $1`,
+            [id],
+          );
+          if (recheck[0]?.status === "completed") {
+            return c.json(
+              redactApiOutput({
+                success: true,
+                runId: id,
+                status: "completed",
+                message: "Run completed concurrently",
+              }),
+            );
+          }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json(redactApiOutput({ error: message }), 500);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json(redactApiOutput({ error: message }), 500);
-    } finally {
-      client.release();
+    } else {
+      for (let i = 0; i < 40; i++) {
+        const { rows: recheck } = await pool.query<{ status: string }>(
+          `SELECT status FROM runs WHERE id = $1`,
+          [id],
+        );
+        const currentStatus = recheck[0]?.status;
+        if (currentStatus === "completed" || currentStatus === "failed") {
+          return c.json(
+            redactApiOutput({
+              success: currentStatus === "completed",
+              runId: id,
+              status: currentStatus,
+              message:
+                currentStatus === "completed"
+                  ? "Run completed concurrently"
+                  : "Run failed concurrently",
+            }),
+          );
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return c.json(
+        redactApiOutput({
+          success: false,
+          runId: id,
+          status: "running",
+          message: "Run still in progress",
+        }),
+      );
     }
   });
 

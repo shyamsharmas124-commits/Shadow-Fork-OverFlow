@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Ctx, Engine, loadEvents } from "@durable/engine";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApiApp, startServer } from "../src/index.js";
+import { createApiApp, isLoopback, startServer } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
 describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
@@ -23,9 +23,11 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
 
       const res = await app.request("/runs?limit=100000");
       expect(res.status).toBe(200);
-      const runs = (await res.json()) as unknown[];
-      expect(Array.isArray(runs)).toBe(true);
-      expect(runs.length).toBeLessThanOrEqual(50);
+      const data = (await res.json()) as { runs: unknown[]; total: number };
+      expect(Array.isArray(data.runs)).toBe(true);
+      expect(data.runs.length).toBeLessThanOrEqual(50);
+      expect(typeof data.total).toBe("number");
+      expect(res.headers.get("x-total-count")).toBe(String(data.total));
     });
 
     it("invalid query returns 400 with Zod error and no stack trace", async () => {
@@ -826,6 +828,276 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
         [runId],
       );
       expect(tasksAfter[0]?.count).toBe(tasksBefore[0]?.count);
+    });
+
+    it("two concurrent resumes on a pool of size 1 succeed without deadlocking and with 0 leaked locks", async () => {
+      // Create a dedicated pool of size 1
+      const tinyPool = await makePool(1);
+      const wf = `wf_pool1_resume_${randomUUID().slice(0, 8)}`;
+      let executionCount = 0;
+      let shouldFail = true;
+
+      const engine = new Engine(tinyPool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "step-tiny",
+            () => {
+              executionCount++;
+              if (shouldFail) {
+                throw new Error("Initial failure for pool size 1 test");
+              }
+              return "success-pool1";
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+        },
+      });
+
+      const runId = await engine.startRun(wf, {});
+      const outFail = await engine.execute(runId);
+      expect(outFail.status).toBe("failed");
+      expect(executionCount).toBe(1);
+
+      // Now enable step to succeed on resume
+      shouldFail = false;
+      let resumeCalls = 0;
+
+      const engineResumed = new Engine(tinyPool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "step-tiny",
+            () => {
+              resumeCalls++;
+              return "success-pool1";
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+        },
+      });
+      const appResumed = createApiApp({ engine: engineResumed, pool: tinyPool });
+
+      // Run two concurrent resumes on pool of size 1
+      const [r1, r2] = await Promise.all([
+        appResumed.request(`/runs/${runId}/resume`, { method: "POST" }),
+        appResumed.request(`/runs/${runId}/resume`, { method: "POST" }),
+      ]);
+
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+      expect(resumeCalls).toBe(1);
+
+      // Verify no advisory locks leaked in pg_locks
+      const { rows: lockRows } = await tinyPool.query<{ count: string }>(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'",
+      );
+      expect(Number.parseInt(lockRows[0]!.count, 10)).toBe(0);
+
+      await tinyPool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+      await tinyPool.end();
+    });
+
+    it("an aborted resume request automatically releases transaction-level advisory lock in pg_locks", async () => {
+      const tinyPool = await makePool(2);
+      const wf = `wf_abort_lock_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(tinyPool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "step-abort",
+            () => {
+              throw new Error("Forced execution failure inside step");
+            },
+            {},
+            { maxAttempts: 1 },
+          );
+        },
+      });
+      const app = createApiApp({ engine, pool: tinyPool });
+
+      const runId = await engine.startRun(wf, {});
+      await engine.execute(runId);
+
+      // Call resume which fails execution
+      const res = await app.request(`/runs/${runId}/resume`, { method: "POST" });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { success: boolean; status: string };
+      expect(body.status).toBe("failed");
+
+      // Assert that transaction advisory lock was released immediately
+      const { rows: lockRows } = await tinyPool.query<{ count: string }>(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'",
+      );
+      expect(Number.parseInt(lockRows[0]!.count, 10)).toBe(0);
+
+      // Also verify explicitly that an aborted/rolled-back transaction releases pg_advisory_xact_lock
+      const client = await tinyPool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('aborted-run'))");
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+      }
+
+      const { rows: lockRows2 } = await tinyPool.query<{ count: string }>(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'",
+      );
+      expect(Number.parseInt(lockRows2[0]!.count, 10)).toBe(0);
+
+      await tinyPool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+      await tinyPool.end();
+    });
+  });
+
+  describe("DNS Rebinding Protection & Host Validation", () => {
+    it("isLoopback correctly validates loopback host variants and rejects non-loopback hosts", () => {
+      // Loopback hosts allowed
+      expect(isLoopback("localhost")).toBe(true);
+      expect(isLoopback("localhost:3000")).toBe(true);
+      expect(isLoopback("127.0.0.1")).toBe(true);
+      expect(isLoopback("127.0.0.1:3000")).toBe(true);
+      expect(isLoopback("127.0.0.42:5173")).toBe(true);
+      expect(isLoopback("127.255.255.255")).toBe(true);
+      expect(isLoopback("::1")).toBe(true);
+      expect(isLoopback("[::1]")).toBe(true);
+      expect(isLoopback("[::1]:3000")).toBe(true);
+
+      // Non-loopback hosts strictly rejected
+      expect(isLoopback("evil.example")).toBe(false);
+      expect(isLoopback("evil.example:3000")).toBe(false);
+      expect(isLoopback("attacker.com")).toBe(false);
+      expect(isLoopback("192.168.1.1")).toBe(false);
+      expect(isLoopback("10.0.0.1")).toBe(false);
+      expect(isLoopback("0.0.0.0")).toBe(false);
+    });
+
+    it("rejects requests with Host: evil.example with 403 Forbidden on all routes without executing", async () => {
+      const engine = new Engine(pool, {});
+      const app = createApiApp({ engine, pool });
+
+      // 1. GET /health with evil Host
+      const resHealth = await app.request("/health", {
+        headers: { Host: "evil.example" },
+      });
+      expect(resHealth.status).toBe(403);
+      const jsonHealth = (await resHealth.json()) as { error: string };
+      expect(jsonHealth.error).toContain("DNS rebinding protection");
+
+      // 2. GET /runs with evil Host
+      const resRuns = await app.request("/runs", {
+        headers: { Host: "evil.example:3000" },
+      });
+      expect(resRuns.status).toBe(403);
+
+      // 3. POST /runs with evil Host
+      const resPost = await app.request("/runs", {
+        method: "POST",
+        headers: {
+          Host: "attacker.com",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ workflowType: "foo", input: {} }),
+      });
+      expect(resPost.status).toBe(403);
+    });
+  });
+
+  describe("POST /runs Endpoint Hardening & Registered Workflows", () => {
+    it("rejects unregistered workflow types with 400 Bad Request and lists registered types", async () => {
+      const registeredWf = `wf_registered_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [registeredWf]: async (ctx: Ctx) => {
+          return await ctx.step("s1", () => "done", {});
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      const res = await app.request("/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowType: "unknown-unregistered-workflow", input: {} }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("Unknown workflow type: 'unknown-unregistered-workflow'");
+      expect(body.error).toContain(registeredWf);
+    });
+
+    it("rejects invalid JSON or missing workflowType with 400 Zod error", async () => {
+      const engine = new Engine(pool, {});
+      const app = createApiApp({ engine, pool });
+
+      const resMissing = await app.request("/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+      });
+      expect(resMissing.status).toBe(400);
+      const bodyMissing = (await resMissing.json()) as { error: string; issues: unknown[] };
+      expect(bodyMissing.error).toBe("Validation failed");
+      expect(bodyMissing.issues.length).toBeGreaterThan(0);
+    });
+
+    it("accepts registered workflow type and starts run returning 201 with runId", async () => {
+      const wf = `wf_start_valid_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step("s1", () => "ok", {});
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      const res = await app.request("/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowType: wf, input: { foo: "bar" } }),
+      });
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { runId: string };
+      expect(body.runId).toBeDefined();
+
+      // Clean up task
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [body.runId]);
+    });
+  });
+
+  describe("Pagination & True Total Computation", () => {
+    it("computes true total count using COUNT(*) and caps page limit at maxLimit (50)", async () => {
+      const wf = `wf_pagination_batch_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step("p-step", () => "p-done", {});
+        },
+      });
+      const app = createApiApp({ engine, pool, maxLimit: 50 });
+
+      // Create 65 runs in database
+      const runIds: string[] = [];
+      for (let i = 0; i < 65; i++) {
+        const id = await engine.startRun(wf, { idx: i });
+        runIds.push(id);
+      }
+
+      // Query runs with requested limit = 10
+      const resLimit10 = await app.request(`/runs?limit=10`);
+      expect(resLimit10.status).toBe(200);
+      const data10 = (await resLimit10.json()) as { runs: unknown[]; total: number };
+      expect(data10.runs.length).toBe(10);
+      expect(data10.total).toBeGreaterThanOrEqual(65);
+      expect(resLimit10.headers.get("x-total-count")).toBe(String(data10.total));
+
+      // Query runs with requested limit = 1000 (should be capped at maxLimit 50)
+      const resCapped = await app.request(`/runs?limit=1000`);
+      expect(resCapped.status).toBe(200);
+      const dataCapped = (await resCapped.json()) as { runs: unknown[]; total: number };
+      expect(dataCapped.runs.length).toBe(50);
+      expect(dataCapped.total).toBe(data10.total);
+
+      // Clean up tasks
+      await pool.query("DELETE FROM tasks WHERE run_id = ANY($1::uuid[])", [runIds]);
     });
   });
 });
