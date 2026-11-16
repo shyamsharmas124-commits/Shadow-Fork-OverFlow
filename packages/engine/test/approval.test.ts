@@ -153,6 +153,37 @@ describe("Milestone 6a - Approval Gate & Human-in-the-Loop", () => {
     await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
   });
 
+  it("2b. concurrent approval race: two simultaneous submitApproval calls serialize via row lock and append exactly 1 event", async () => {
+    const wfName = `wf_approval_race_${randomUUID().slice(0, 8)}`;
+    const engine = new Engine(pool, {
+      [wfName]: async (ctx: Ctx) => {
+        return await ctx.waitForApproval("concurrent-gate");
+      },
+    });
+
+    const runId = await engine.startRun(wfName, {});
+    await engine.execute(runId);
+
+    // Call submitApproval simultaneously via Promise.all
+    const [resA, resB] = await Promise.all([
+      engine.submitApproval(runId, "concurrent-gate", { decision: "approve", note: "Race A" }),
+      engine.submitApproval(runId, "concurrent-gate", { decision: "approve", note: "Race B" }),
+    ]);
+
+    expect(resA.success).toBe(true);
+    expect(resB.success).toBe(true);
+    expect(resA.eventSeq).toBe(resB.eventSeq);
+
+    // Strictly exactly ONE decision event exists in history
+    const events = await loadEvents(pool, runId);
+    const decisionEvents = events.filter(
+      (e) => e.type === "ApprovalGranted" || e.type === "ApprovalRejected",
+    );
+    expect(decisionEvents.length).toBe(1);
+
+    await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+  });
+
   it("3. reject path: workflow handles rejection decision properly", async () => {
     let rejectionHandled = false;
     const wfName = `wf_approval_reject_${randomUUID().slice(0, 8)}`;

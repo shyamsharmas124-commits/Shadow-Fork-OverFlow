@@ -103,11 +103,11 @@ Building reliable business processes across distributed microservices, LLM APIs,
 
 ### 4. At-Least-Once External Delivery & Exactly-Once Event Log Recording
 - The event log records each step completion (`StepCompleted`) exactly once; external network calls are at-least-once.
-- Protection against duplicate effects depends on the receiver honouring the idempotency key.
 - If a worker crashes mid-task, the reaper (`reapTasks`) resets expired leases back to `pending`.
 - Every step receives an auto-generated idempotency key:
-  $$\text{idempotencyKey} = \text{sha256}(\text{runId} + ":" + \text{stepName} + ":" + \text{occurrence})$$
-- Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header. Downstream payment gateways and APIs honour this key to deduplicate retry requests, preventing duplicate real-world effects.
+  $$\text{idempotencyKey} = \text{runId} + ":" + \text{stepName}$$
+  (implemented at `packages/engine/src/context.ts:94-96`).
+- Outbound HTTP connectors pass this key in the `Idempotency-Key` HTTP header on external network calls.
 
 ### 5. Human-in-the-Loop Approval Gates
 - Workflows can request human intervention with `await ctx.waitForApproval(name, payload)`.
@@ -223,4 +223,4 @@ The design and architecture of `durable` draw directly upon established paradigm
    - Publication:
      - Qian Li, Peter Kraft, Kostis Kaffes, Athinagoras Skiadopoulos, Deeptaanshu Kumar, Jason Li, Michael Cafarella, Goetz Graefe, Jeremy Kepner, Christos Kozyrakis, Michael Stonebraker, Lalith Suresh, Matei Zaharia. *"A Progress Report on DBOS: A Database-oriented Operating System."* In *Proceedings of the Conference on Innovative Data Systems Research (CIDR)*, 2022. URL: http://cidrdb.org/cidr2022/papers/p13-li.pdf
    - Documentation: [DBOS Architecture & Durable Execution](https://docs.dbos.dev/) (fetched November 16, 2026).
-   - **Database-Centric Durability**: DBOS demonstrates managing workflow state, task queues, and execution history directly within PostgreSQL using relational transactions and row-level locking clauses (`SELECT ... FOR UPDATE SKIP LOCKED`), eliminating the need for a separate consensus cluster.
+   - **Postgres-Backed Durable Queues & Execution**: DBOS demonstrates executing workflows and durable queues directly on PostgreSQL using native concurrency control (such as row-level locking clauses), eliminating the need for a separate, heavyweight orchestration cluster.
