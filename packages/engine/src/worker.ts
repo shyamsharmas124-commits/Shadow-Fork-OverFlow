@@ -10,6 +10,8 @@ export interface WorkerOptions {
   heartbeatIntervalMs?: number;
   pollIntervalMs?: number;
   clock?: Clock;
+  /** Test-only hook: invoked before StepCompleted is committed. Gated by NODE_ENV === 'test'. */
+  __testHookBeforeStepCommit?: (stepName: string, attempt: number) => Promise<void> | void;
 }
 
 export class Worker {
@@ -18,6 +20,7 @@ export class Worker {
   public readonly heartbeatIntervalMs: number;
   public readonly pollIntervalMs: number;
   public readonly clock: Clock;
+  private readonly options: WorkerOptions;
 
   public lastFencingError?: FencingError;
 
@@ -30,6 +33,7 @@ export class Worker {
     private readonly engine: Engine,
     options: WorkerOptions = {},
   ) {
+    this.options = options;
     this.workerId = options.workerId ?? `worker-${randomUUID().slice(0, 8)}`;
     this.leaseDurationMs = options.leaseDurationMs ?? 5000;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 1000;
@@ -79,6 +83,8 @@ export class Worker {
         clock: this.clock,
         registerHeartbeat: (timer) => this.heartbeatTimers.add(timer),
         unregisterHeartbeat: (timer) => this.heartbeatTimers.delete(timer),
+        __testHookBeforeStepCommit:
+          process.env.NODE_ENV === "test" ? this.options.__testHookBeforeStepCommit : undefined,
       });
 
       return true;
@@ -105,7 +111,10 @@ export class Worker {
           if (!didWork && this.running) {
             await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
           }
-        } catch {
+        } catch (err) {
+          if (process.env.DEBUG_WORKER) {
+            console.error(`[Worker ${this.workerId}] tick error:`, err);
+          }
           if (!this.running) break;
           await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
         }

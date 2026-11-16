@@ -84,6 +84,8 @@ export interface RunContextOptions {
   onHeartbeatLost?: (taskId: string) => void;
   registerHeartbeat?: (timer: NodeJS.Timeout) => void;
   unregisterHeartbeat?: (timer: NodeJS.Timeout) => void;
+  /** Test-only hook: executed after step function completes but before StepCompleted event is committed. Ignored unless NODE_ENV === 'test'. */
+  __testHookBeforeStepCommit?: (stepName: string, attempt: number) => Promise<void> | void;
 }
 
 const describe = (e: StoredEvent): string =>
@@ -423,6 +425,11 @@ export class RunContext implements Ctx {
 
       if (leaseLost) {
         throw new FencingError(taskId, workerId);
+      }
+
+      // Test-only pause hook: gated strictly behind NODE_ENV === 'test'. Cannot be enabled in normal runs.
+      if (process.env.NODE_ENV === "test" && this.options.__testHookBeforeStepCommit) {
+        await this.options.__testHookBeforeStepCommit(name, currentAttempt);
       }
 
       // Completion write checks lease_owner (fencing) and appends event in same transaction
