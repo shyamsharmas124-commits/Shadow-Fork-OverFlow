@@ -339,10 +339,3 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   });
 }
 
-// Auto-run if main
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  main().catch((err) => {
-    console.error("Chaos test failed:", err);
-    process.exit(1);
-  });
-}
