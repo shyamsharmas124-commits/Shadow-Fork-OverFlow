@@ -14,6 +14,9 @@ importers:
 
   packages/engine:
     dependencies:
+      libpg-query:
+        specifier: ^18.2.4
+        version: 18.2.4
       pg:
         specifier: ^8.13.0
         version: 8.23.1
@@ -270,6 +273,9 @@ packages:
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
+  '@pgsql/types@18.0.0':
+    resolution: {integrity: sha512-jtAY4JU7jdVYZ/Vv3zlZqVP+FRWZokyCLKPPCnAApiaJAElpyyiMC3HRiquBu29kSrVs+rkqZD50SUIb/zyEGw==}
+
   '@rollup/rollup-android-arm-eabi@4.68.3':
     resolution: {integrity: sha512-mqfypgH/liYjaSCoPI4erckUcROgZtmFUUmyOJ05oyayi/tVqOEYAzWP7ufqCoCT3xB31Fw4XIVO/jX42hYvKA==}
     cpu: [arm]
@@ -521,6 +527,9 @@ packages:
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
+
+  libpg-query@18.2.4:
+    resolution: {integrity: sha512-7nqWUm+39v/fYgWP0qR+sYC7tyhmW8lctqAzx7bdKG6V0ySr9G1lcY43BdZM5+lxVSzL0Y5Yy6eM9e+uL7T79w==}
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -877,6 +886,8 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
+  '@pgsql/types@18.0.0': {}
+
   '@rollup/rollup-android-arm-eabi@4.68.3':
     optional: true
 
@@ -1085,6 +1096,10 @@ snapshots:
     optional: true
 
   js-tokens@9.0.1: {}
+
+  libpg-query@18.2.4:
+    dependencies:
+      '@pgsql/types': 18.0.0
 
   loupe@3.2.1: {}
 

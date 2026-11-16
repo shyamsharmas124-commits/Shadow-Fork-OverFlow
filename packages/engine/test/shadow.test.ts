@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import http, { request as esmHttpRequest } from "node:http";
+import https from "node:https";
+import { createRequire } from "node:module";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -895,7 +897,7 @@ describe("Milestone 4b - Shadow Mode", () => {
     const forkOutcome2 = await engine.execute(forkId2);
     expect(forkOutcome2.status).toBe("failed");
     if (forkOutcome2.status === "failed") {
-      expect(forkOutcome2.error).toMatch(/cannot run inside a transaction/i);
+      expect(forkOutcome2.error).toMatch(/cannot run inside a transaction|is forbidden/i);
     }
   });
 
@@ -956,27 +958,70 @@ describe("Milestone 4b - Shadow Mode", () => {
 
   describe("M4d Item 2 - Shadow SQL transaction escape & client destruction", () => {
     it.each([
-      { name: "COMMIT", query: "COMMIT", expectedError: /transaction control \(COMMIT\)/i },
-      { name: "END", query: "END", expectedError: /transaction control \(END\)/i },
+      {
+        name: "SELECT 'a\\'; COMMIT; --'",
+        query: "SELECT 'a\\'; COMMIT; --'",
+        expectedError: /exactly one statement/i,
+      },
+      {
+        name: "COMMIT",
+        query: "COMMIT",
+        expectedError: /statement type 'TransactionStmt' is forbidden/i,
+      },
+      {
+        name: "END",
+        query: "END",
+        expectedError: /statement type 'TransactionStmt' is forbidden/i,
+      },
       {
         name: "/* x */ COMMIT",
         query: "/* x */ COMMIT",
-        expectedError: /transaction control \(COMMIT\)/i,
+        expectedError: /statement type 'TransactionStmt' is forbidden/i,
+      },
+      {
+        name: "ABORT",
+        query: "ABORT",
+        expectedError: /statement type 'TransactionStmt' is forbidden/i,
       },
       {
         name: "UPDATE ...; COMMIT",
         query: "UPDATE shadow_accounts SET balance = 999; COMMIT",
-        expectedError: /multi-statement queries are forbidden/i,
+        expectedError: /exactly one statement/i,
       },
       {
         name: "SET search_path = x",
         query: "SET search_path = evil_schema",
-        expectedError: /session-level SET is forbidden/i,
+        expectedError: /statement type 'VariableSetStmt' is forbidden/i,
+      },
+      {
+        name: "SET LOCAL statement_timeout = 0",
+        query: "SET LOCAL statement_timeout = 0",
+        expectedError: /statement type 'VariableSetStmt' is forbidden/i,
+      },
+      {
+        name: "DO $$ BEGIN PERFORM pg_advisory_lock(1); END $$",
+        query: "DO $$ BEGIN PERFORM pg_advisory_lock(1); END $$",
+        expectedError: /statement type 'DoStmt' is forbidden/i,
+      },
+      {
+        name: "SELECT set_config('search_path','x',false)",
+        query: "SELECT set_config('search_path','x',false)",
+        expectedError: /forbidden function 'set_config'/i,
       },
       {
         name: "SELECT pg_advisory_lock(1)",
         query: "SELECT pg_advisory_lock(1)",
-        expectedError: /session-level advisory locks are forbidden/i,
+        expectedError: /forbidden function 'pg_advisory_lock'/i,
+      },
+      {
+        name: "SELECT pg_advisory_lock_shared(1)",
+        query: "SELECT pg_advisory_lock_shared(1)",
+        expectedError: /forbidden function 'pg_advisory_lock_shared'/i,
+      },
+      {
+        name: "SELECT dblink_exec('myconn', 'SELECT 1')",
+        query: "SELECT dblink_exec('myconn', 'SELECT 1')",
+        expectedError: /forbidden function 'dblink_exec'/i,
       },
     ])(
       "rejects $name, leaves target rows unchanged, and surfaces clear error",
@@ -1480,6 +1525,181 @@ describe("Milestone 4b - Shadow Mode", () => {
       });
 
       await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("mock takes precedence over an existing parent result", async () => {
+      const wf = `wf_mock_precedence_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const r1 = await ctx.step("step-init", () => "ready", {});
+          const r2 = await ctx.step(
+            "step-existing",
+            () => ({ balance: 100 }),
+            {},
+            { kind: "effectful-external" },
+          );
+          return { r1, r2 };
+        },
+      });
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      const forkId = await engine.fork(parentId, 2, {
+        mocks: {
+          "step-existing": { balance: 999 },
+        },
+      });
+      const fOutcome = await engine.execute(forkId);
+      expect(fOutcome.status).toBe("completed");
+      if (fOutcome.status === "completed") {
+        expect(fOutcome.result).toEqual({ r1: "ready", r2: { balance: 999 } });
+      }
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("mock occurrence is honored across multiple calls to the same step", async () => {
+      const wf = `wf_mock_occurrence_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const r1 = await ctx.step(
+            "step-repeat",
+            () => ({ val: "original-0" }),
+            {},
+            { kind: "effectful-external" },
+          );
+          const r2 = await ctx.step(
+            "step-repeat",
+            () => ({ val: "original-1" }),
+            {},
+            { kind: "effectful-external" },
+          );
+          return { r1, r2 };
+        },
+      });
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      // Mock ONLY occurrence 1
+      const forkId = await engine.fork(parentId, 2, {
+        mocks: [{ stepName: "step-repeat", occurrence: 1, result: { val: "mocked-1" } }],
+      });
+      const fOutcome = await engine.execute(forkId);
+      expect(fOutcome.status).toBe("completed");
+      if (fOutcome.status === "completed") {
+        // Occurrence 0 reuses original parent result; occurrence 1 uses mock
+        expect(fOutcome.result).toEqual({
+          r1: { val: "original-0" },
+          r2: { val: "mocked-1" },
+        });
+      }
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("rejects name-only Record mock when step occurs more than once in parent", async () => {
+      const wf = `wf_mock_record_ambig_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const r1 = await ctx.step(
+            "step-repeat",
+            () => ({ val: "original-0" }),
+            {},
+            { kind: "effectful-external" },
+          );
+          const r2 = await ctx.step(
+            "step-repeat",
+            () => ({ val: "original-1" }),
+            {},
+            { kind: "effectful-external" },
+          );
+          return { r1, r2 };
+        },
+      });
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      await expect(
+        engine.fork(parentId, 2, {
+          mocks: {
+            "step-repeat": { val: "ambiguous-mock" },
+          },
+        }),
+      ).rejects.toThrow(
+        /Ambiguous mock for step 'step-repeat': step occurs 2 times in parent run/i,
+      );
+
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [parentId]);
+    });
+  });
+
+  describe("M4e Egress & Idempotency Header hardening", () => {
+    it("egress guard catches https.get and CommonJS require('node:http').request", async () => {
+      const wf = `wf_egress_variants_${randomUUID().slice(0, 8)}`;
+      const require = createRequire(import.meta.url);
+      const cjsHttp = require("node:http");
+      let testVariant: "https" | "cjsHttp" = "https";
+      let isFork = false;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("init", () => "ready", {});
+          return await ctx.step(
+            "test-step",
+            () => {
+              if (isFork) {
+                if (testVariant === "https") {
+                  https.get("https://127.0.0.1:9999");
+                } else {
+                  cjsHttp.request("http://127.0.0.1:9999");
+                }
+              }
+              return { ok: true };
+            },
+            {},
+            { kind: "effectful-external", maxAttempts: 1, mock: { ok: true } },
+          );
+        },
+      });
+      const pId = await engine.startRun(wf, {});
+      await engine.execute(pId);
+
+      isFork = true;
+      // 1. https.get
+      testVariant = "https";
+      const f1 = await engine.fork(pId, 2, { input: {} });
+      const res1 = await engine.execute(f1);
+      expect(res1.status).toBe("failed");
+      if (res1.status === "failed") {
+        expect(res1.error).toMatch(/Shadow egress violation.*node:https get/i);
+      }
+
+      // 2. CJS require("node:http").request
+      testVariant = "cjsHttp";
+      const f2 = await engine.fork(pId, 2, { input: {} });
+      const res2 = await engine.execute(f2);
+      expect(res2.status).toBe("failed");
+      if (res2.status === "failed") {
+        expect(res2.error).toMatch(/Shadow egress violation.*node:http request/i);
+      }
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2, $3)", [pId, f1, f2]);
+    });
+
+    it("does not redact Idempotency-Key headers while redacting other sensitive headers", () => {
+      const redacted = redactHeaders({
+        "idempotency-key": "run-123:step-charge",
+        "Idempotency-Key": "run-123:step-charge",
+        "x-idempotency-key": "custom-uuid-key",
+        authorization: "Bearer secret-token",
+        api_key: "raw-key-123",
+      });
+      expect(redacted["idempotency-key"]).toBe("run-123:step-charge");
+      expect(redacted["Idempotency-Key"]).toBe("run-123:step-charge");
+      expect(redacted["x-idempotency-key"]).toBe("custom-uuid-key");
+      expect(redacted.authorization).toBe("[REDACTED]");
+      expect(redacted.api_key).toBe("[REDACTED]");
     });
   });
 });

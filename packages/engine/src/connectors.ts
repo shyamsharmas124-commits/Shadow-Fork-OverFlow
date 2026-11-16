@@ -1,3 +1,4 @@
+import { parse } from "libpg-query";
 import type { Pool, PoolClient } from "pg";
 
 export interface HttpRequest {
@@ -45,11 +46,22 @@ export function redactStringValue(val: string): string {
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED_KEY]");
 }
 
+const SECRET_FIELD_ALLOWLIST = new Set([
+  "idempotency-key",
+  "idempotency_key",
+  "idempotencykey",
+  "x-idempotency-key",
+]);
+
 /**
  * Checks if a header, query param, or payload field name is sensitive and must be redacted.
+ * Idempotency keys (e.g. Idempotency-Key, idempotency_key) are explicitly allowlisted so diff views retain them.
  */
 export function isSecretFieldName(name: string): boolean {
   const lower = name.toLowerCase();
+  if (SECRET_FIELD_ALLOWLIST.has(lower)) {
+    return false;
+  }
   return (
     lower === "authorization" ||
     lower === "cookie" ||
@@ -271,6 +283,8 @@ export class LiveSqlConnector implements SqlConnector {
 
 /**
  * Strips comments (-- and /* *\/) and string literals ('...' and $$...$$) from SQL.
+ * Correctly treats backslash as an escape ONLY for E-strings (E'...') in accordance
+ * with standard Postgres standard_conforming_strings = on.
  */
 export function stripSqlCommentsAndStrings(sql: string): string {
   let out = "";
@@ -304,6 +318,7 @@ export function stripSqlCommentsAndStrings(sql: string): string {
       continue;
     }
     if (sql[i] === "'") {
+      const isEString = i > 0 && (sql[i - 1] === "E" || sql[i - 1] === "e");
       i++;
       while (i < len) {
         if (sql[i] === "'") {
@@ -313,7 +328,7 @@ export function stripSqlCommentsAndStrings(sql: string): string {
             i++;
             break;
           }
-        } else if (sql[i] === "\\") {
+        } else if (isEString && sql[i] === "\\") {
           i += 2;
         } else {
           i++;
@@ -340,75 +355,100 @@ export function stripSqlCommentsAndStrings(sql: string): string {
   return out;
 }
 
-export function validateShadowSql(sql: string): void {
-  const stripped = stripSqlCommentsAndStrings(sql);
-  const trimmed = stripped.trim().replace(/;+\s*$/, "");
+/**
+ * Traverses an AST recursively, invoking visitor on every object node.
+ */
+function walkAst(node: unknown, visitor: (node: Record<string, unknown>) => void): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      walkAst(item, visitor);
+    }
+    return;
+  }
+  const record = node as Record<string, unknown>;
+  visitor(record);
+  for (const val of Object.values(record)) {
+    walkAst(val, visitor);
+  }
+}
 
-  if (trimmed.includes(";")) {
-    throw new Error("Shadow SQL error: multi-statement queries are forbidden in shadow mode.");
+/**
+ * Function denylist:
+ * - set_config
+ * - any dblink* variant
+ * - any pg_advisory_lock* variant EXCEPT pg_advisory_xact_lock*
+ * - any pg_try_advisory_lock* variant EXCEPT pg_try_advisory_xact_lock*
+ * - pg_terminate_backend
+ * - pg_cancel_backend
+ * - lo_import, lo_export
+ * - pg_read_file, pg_read_binary_file, pg_ls_dir
+ */
+export function isForbiddenSqlFunction(fnName: string): boolean {
+  const lower = fnName.toLowerCase();
+  if (lower === "set_config") return true;
+  if (lower.startsWith("dblink")) return true;
+  if (lower.startsWith("pg_advisory_lock") && !lower.startsWith("pg_advisory_xact_lock")) {
+    return true;
+  }
+  if (lower.startsWith("pg_try_advisory_lock") && !lower.startsWith("pg_try_advisory_xact_lock")) {
+    return true;
+  }
+  if (lower === "pg_terminate_backend") return true;
+  if (lower === "pg_cancel_backend") return true;
+  if (lower === "lo_import") return true;
+  if (lower === "lo_export") return true;
+  if (lower === "pg_read_file") return true;
+  if (lower === "pg_read_binary_file") return true;
+  if (lower === "pg_ls_dir") return true;
+  return false;
+}
+
+/**
+ * Validates shadow SQL using the PostgreSQL AST parser (libpg-query).
+ * 1. Rejects multi-statement queries (allows exactly one statement).
+ * 2. Enforces allowlist of top-level statement kinds: SELECT, INSERT, UPDATE, DELETE (WITH allowed if body is one of those).
+ *    Explicitly rejects user-issued SET (including SET LOCAL), DO, ABORT, PREPARE, EXECUTE, DEALLOCATE, COPY, NOTIFY.
+ * 3. Walks the AST and rejects calls to forbidden functions in the denylist.
+ */
+export async function validateShadowSql(sql: string): Promise<void> {
+  let parseRes: { stmts: Array<{ stmt: Record<string, unknown> }> };
+  try {
+    parseRes = (await parse(sql)) as { stmts: Array<{ stmt: Record<string, unknown> }> };
+  } catch (err) {
+    throw new Error(`Shadow SQL syntax error: ${(err as Error).message}`);
   }
 
-  if (/\b(?:BEGIN|START\s+TRANSACTION)\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: transaction control (BEGIN) is forbidden in shadow mode.");
-  }
-  if (/\bCOMMIT\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: transaction control (COMMIT) is forbidden in shadow mode.");
-  }
-
-  const caseMatches = stripped.match(/\bCASE\b/gi) ?? [];
-  const endMatches = stripped.match(/\bEND\b/gi) ?? [];
-  if (endMatches.length > caseMatches.length) {
-    throw new Error("Shadow SQL error: transaction control (END) is forbidden in shadow mode.");
-  }
-
-  if (/\bROLLBACK\b/i.test(stripped)) {
+  if (parseRes.stmts.length !== 1) {
     throw new Error(
-      "Shadow SQL error: transaction control (ROLLBACK) is forbidden in shadow mode.",
+      `Shadow SQL error: exactly one statement is allowed in shadow mode (found ${parseRes.stmts.length} statements).`,
     );
   }
-  if (/\bSAVEPOINT\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: savepoints are forbidden in shadow mode.");
-  }
-  if (/\bRELEASE\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: transaction control (RELEASE) is forbidden in shadow mode.");
-  }
-  if (/^SET\s+(?:SESSION\s+)?(?!LOCAL\b)/i.test(trimmed)) {
+
+  const stmtObj = parseRes.stmts[0]!.stmt;
+  const stmtType = Object.keys(stmtObj)[0]!;
+  const allowedStmtTypes = ["SelectStmt", "InsertStmt", "UpdateStmt", "DeleteStmt"];
+  if (!allowedStmtTypes.includes(stmtType)) {
     throw new Error(
-      "Shadow SQL error: session-level SET is forbidden in shadow mode (use SET LOCAL).",
+      `Shadow SQL error: statement type '${stmtType}' is forbidden in shadow mode (only SELECT, INSERT, UPDATE, and DELETE are allowed).`,
     );
   }
-  if (/\bRESET\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: RESET is forbidden in shadow mode.");
-  }
-  if (/\bDISCARD\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: DISCARD is forbidden in shadow mode.");
-  }
-  if (/\bLISTEN\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: LISTEN is forbidden in shadow mode.");
-  }
-  if (/\bUNLISTEN\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: UNLISTEN is forbidden in shadow mode.");
-  }
-  if (/\bCOPY\b[\s\S]*\bPROGRAM\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: COPY PROGRAM is forbidden in shadow mode.");
-  }
-  if (/\bCALL\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: CALL is forbidden in shadow mode.");
-  }
-  if (/\bVACUUM\b/i.test(stripped)) {
-    throw new Error(
-      "Shadow SQL error: statement 'VACUUM' cannot run inside a transaction and cannot be rolled back.",
-    );
-  }
-  if (/\bCONCURRENTLY\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: CONCURRENTLY operations are forbidden in shadow mode.");
-  }
-  if (/\bREINDEX\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: REINDEX is forbidden in shadow mode.");
-  }
-  if (/\bpg_(?:try_)?advisory_lock\b/i.test(stripped)) {
-    throw new Error("Shadow SQL error: session-level advisory locks are forbidden in shadow mode.");
-  }
+
+  walkAst(stmtObj, (node) => {
+    if (node.FuncCall && typeof node.FuncCall === "object") {
+      const funcname = (node.FuncCall as { funcname?: Array<{ String?: { sval?: string } }> })
+        .funcname;
+      if (Array.isArray(funcname) && funcname.length > 0) {
+        const last = funcname[funcname.length - 1];
+        const fnName = last?.String?.sval;
+        if (fnName && isForbiddenSqlFunction(fnName)) {
+          throw new Error(
+            `Shadow SQL error: call to forbidden function '${fnName}' is not allowed in shadow mode.`,
+          );
+        }
+      }
+    }
+  });
 }
 
 export class ShadowSqlConnector implements SqlConnector {
@@ -437,7 +477,7 @@ export class ShadowSqlConnector implements SqlConnector {
    */
   async query(sql: string, params?: unknown[]): Promise<SqlResult> {
     this.callCount++;
-    validateShadowSql(sql);
+    await validateShadowSql(sql);
     const client = await this.getClient();
     const res = await client.query(sql, params);
     const rowCount = res.rowCount ?? 0;

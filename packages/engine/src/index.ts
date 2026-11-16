@@ -1,3 +1,8 @@
+import { installEgressGuard } from "./guard.js";
+
+// Eagerly install egress guard at engine import time before user workflow modules load
+installEgressGuard();
+
 export { type Clock, ManualClock, SystemClock } from "./clock.js";
 export {
   type CapturedEffect,

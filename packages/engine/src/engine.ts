@@ -260,6 +260,21 @@ export class Engine {
           (e.payload as { name: string }).name === stepPayload.name,
       ).length - 1;
 
+    // Validate that name-only Record mocks are not ambiguous when step occurs multiple times
+    const mocksToApply = ("mocks" in edit ? edit.mocks : undefined) ?? options.mocks;
+    if (mocksToApply && typeof mocksToApply === "object" && !Array.isArray(mocksToApply)) {
+      for (const stepName of Object.keys(mocksToApply)) {
+        const parentOccurrences = events.filter(
+          (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === stepName,
+        ).length;
+        if (parentOccurrences > 1) {
+          throw new Error(
+            `Ambiguous mock for step '${stepName}': step occurs ${parentOccurrences} times in parent run. Use per-occurrence mock array instead.`,
+          );
+        }
+      }
+    }
+
     const forkMode = "shadow";
 
     const client = await this.pool.connect();

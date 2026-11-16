@@ -20,7 +20,24 @@ async function getSchema(dbName) {
       WHERE table_schema = 'public'
       ORDER BY table_name, constraint_name;
     `);
-    return { columns: cols.rows, constraints: constraints.rows };
+    const indexes = await client.query(`
+      SELECT tablename, indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+      ORDER BY tablename, indexname;
+    `);
+    const triggers = await client.query(`
+      SELECT trigger_name, event_manipulation, event_object_table, action_statement, action_timing
+      FROM information_schema.triggers
+      WHERE trigger_schema = 'public'
+      ORDER BY event_object_table, trigger_name;
+    `);
+    return {
+      columns: cols.rows,
+      constraints: constraints.rows,
+      indexes: indexes.rows,
+      triggers: triggers.rows,
+    };
   } finally {
     await client.end();
   }
@@ -42,7 +59,7 @@ async function main() {
   for (const [key, c1] of colMap1.entries()) {
     const c2 = colMap2.get(key);
     if (!c2) {
-      console.log(`[-] Missing in ${db2}: ${key}`);
+      console.log(`[-] Missing column in ${db2}: ${key}`);
       diffFound = true;
     } else {
       if (
@@ -63,13 +80,65 @@ async function main() {
 
   for (const key of colMap2.keys()) {
     if (!colMap1.has(key)) {
-      console.log(`[+] Extra in ${db2}: ${key}`);
+      console.log(`[+] Extra column in ${db2}: ${key}`);
       diffFound = true;
     }
   }
 
+  // Compare indexes
+  const idxMap1 = new Map(s1.indexes.map((i) => [`${i.tablename}.${i.indexname}`, i.indexdef]));
+  const idxMap2 = new Map(s2.indexes.map((i) => [`${i.tablename}.${i.indexname}`, i.indexdef]));
+
+  for (const [key, def1] of idxMap1.entries()) {
+    const def2 = idxMap2.get(key);
+    if (!def2) {
+      console.log(`[-] Missing index in ${db2}: ${key}`);
+      diffFound = true;
+    } else if (def1 !== def2) {
+      console.log(`[~] Index definition diff for ${key}:`);
+      console.log(`    ${db1}: ${def1}`);
+      console.log(`    ${db2}: ${def2}`);
+      diffFound = true;
+    }
+  }
+  for (const key of idxMap2.keys()) {
+    if (!idxMap1.has(key)) {
+      console.log(`[+] Extra index in ${db2}: ${key}`);
+      diffFound = true;
+    }
+  }
+
+  // Compare triggers
+  const trigMap1 = new Map(s1.triggers.map((t) => [`${t.event_object_table}.${t.trigger_name}.${t.event_manipulation}`, t]));
+  const trigMap2 = new Map(s2.triggers.map((t) => [`${t.event_object_table}.${t.trigger_name}.${t.event_manipulation}`, t]));
+
+  for (const [key, t1] of trigMap1.entries()) {
+    const t2 = trigMap2.get(key);
+    if (!t2) {
+      console.log(`[-] Missing trigger in ${db2}: ${key}`);
+      diffFound = true;
+    }
+  }
+  for (const key of trigMap2.keys()) {
+    if (!trigMap1.has(key)) {
+      console.log(`[+] Extra trigger in ${db2}: ${key}`);
+      diffFound = true;
+    }
+  }
+
+  // Explicit check for events_no_update trigger
+  const hasTriggerA = s1.triggers.some((t) => t.trigger_name === "events_no_update" && t.event_object_table === "events");
+  const hasTriggerB = s2.triggers.some((t) => t.trigger_name === "events_no_update" && t.event_object_table === "events");
+
+  if (!hasTriggerA || !hasTriggerB) {
+    console.error(`[!] events_no_update trigger check failed: ${db1}=${hasTriggerA}, ${db2}=${hasTriggerB}`);
+    diffFound = true;
+  } else {
+    console.log(`[✓] Trigger 'events_no_update' on table 'events' verified present on both ${db1} and ${db2}.`);
+  }
+
   if (!diffFound) {
-    console.log("Schema definitions, data types, nullabilities, and defaults are 100% IDENTICAL.");
+    console.log("Schema columns, constraints, indexes, and triggers are 100% IDENTICAL.");
   }
 }
 
