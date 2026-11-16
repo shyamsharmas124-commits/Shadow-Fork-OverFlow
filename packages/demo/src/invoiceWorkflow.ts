@@ -92,10 +92,15 @@ export async function extractWithLLM(
   discountCode?: string,
 ): Promise<ExtractedInvoice> {
   if (process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.ANTHROPIC_MODEL) {
+      throw new Error(
+        "ANTHROPIC_MODEL environment variable is required when ANTHROPIC_API_KEY is provided (no hardcoded fallback allowed).",
+      );
+    }
     try {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const response = await client.messages.create({
-        model: "claude-3-5-sonnet-latest",
+        model: process.env.ANTHROPIC_MODEL,
         max_tokens: 1024,
         tools: [
           {

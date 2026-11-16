@@ -6,6 +6,25 @@ import { startMockServers } from "./mocks.js";
 const { Pool } = pg;
 
 async function main() {
+  const isRealApi = Boolean(process.env.ANTHROPIC_API_KEY);
+  if (isRealApi) {
+    if (!process.env.ANTHROPIC_MODEL) {
+      console.error("ERROR: ANTHROPIC_API_KEY is provided but ANTHROPIC_MODEL is not set.");
+      console.error("Please export ANTHROPIC_MODEL (e.g. claude-3-5-sonnet-20241022). No fallback is permitted.");
+      process.exit(1);
+    }
+    console.log(`[MODE: REAL ANTHROPIC API (Model: ${process.env.ANTHROPIC_MODEL})]`);
+  } else {
+    console.log("[MODE: DETERMINISTIC RECORDED FALLBACK - NO ANTHROPIC_API_KEY PROVIDED]");
+    console.log("*******************************************************************************");
+    console.log("* LOUD NOTICE: NO ANTHROPIC_API_KEY PROVIDED!                                 *");
+    console.log("* RUNNING DEMO WITH DETERMINISTIC RECORDED FALLBACK FIXTURES.                 *");
+    console.log("* TO USE REAL ANTHROPIC LLM INVOICE EXTRACTION, EXPORT:                       *");
+    console.log("*   ANTHROPIC_API_KEY=\"sk-ant-...\"                                            *");
+    console.log("*   ANTHROPIC_MODEL=\"claude-3-5-sonnet-20241022\"                              *");
+    console.log("*******************************************************************************\n");
+  }
+
   console.log("=============================================================");
   console.log("   DURABLE WORKFLOW ENGINE - SHADOW FORK DEMO");
   console.log("=============================================================\n");
