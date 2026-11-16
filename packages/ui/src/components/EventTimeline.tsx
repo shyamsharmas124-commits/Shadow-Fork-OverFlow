@@ -1,4 +1,5 @@
 import type { EffectDiffItem, RunEvent } from "../types.js";
+import { formatDate } from "../utils/date.js";
 import { Badge } from "./Badge.js";
 
 interface EventTimelineProps {
@@ -18,19 +19,23 @@ export function EventTimeline({
     <div className="flex flex-col gap-2 max-h-[500px] overflow-y-auto pr-1">
       {events.map((event) => {
         const isSelected = selectedSeq === event.seq;
-        const stepName = (event.payload?.name as string) || (event.payload?.stepName as string);
+        const p = (event.payload ?? {}) as Record<string, unknown>;
+        const stepName = (p.name as string | undefined) || (p.stepName as string | undefined);
 
         // Find matching diff step if applicable
         const matchingDiff = stepName ? diffSteps.find((s) => s.stepName === stepName) : undefined;
 
-        const isReused = matchingDiff?.reusedFromParent ?? false;
-        const isInputChanged = matchingDiff?.inputChangedFromParent ?? false;
+        const isReused = matchingDiff?.reusedFromParent ?? Boolean(p.reusedFromParent);
+        const isInputChanged =
+          matchingDiff?.inputChangedFromParent ?? Boolean(p.inputChangedFromParent);
+        const isMock = p.resultSource === "mock";
 
         const getBadgeVariant = (type: string) => {
           if (type === "RunCompleted") return "success";
           if (type === "RunFailed" || type === "StepFailed") return "danger";
           if (type === "EffectCaptured") return "purple";
           if (type === "StepCompleted") return "cyan";
+          if (type === "RunResumed") return "warning";
           return "default";
         };
 
@@ -58,11 +63,12 @@ export function EventTimeline({
                 <div className="flex items-center gap-2 mt-1">
                   {isReused && <Badge variant="cyan">reusedFromParent</Badge>}
                   {isInputChanged && <Badge variant="warning">inputChangedFromParent</Badge>}
+                  {isMock && <Badge variant="purple">mock</Badge>}
                 </div>
               </div>
             </div>
-            <span className="text-xs text-slate-500">
-              {new Date(event.createdAt).toLocaleTimeString()}
+            <span className="text-xs text-slate-500 font-mono">
+              {formatDate(event.createdAt, { timeOnly: true })}
             </span>
           </button>
         );

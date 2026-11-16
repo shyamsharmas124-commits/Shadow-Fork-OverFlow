@@ -32,4 +32,25 @@ describe("Milestone 5b - UI XSS & Security Rendering", () => {
     expect(container.textContent).toContain('<img src=\\"x\\" onerror=\\"alert(1)\\">');
     expect(container.textContent).toContain('<script>alert(\\"hacked\\")</script>');
   });
+
+  it('ensures <img src=x onerror="window.__pwned=1"> does not execute and window.__pwned remains undefined', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: testing XSS variable on window
+    (window as any).__pwned = undefined;
+
+    const xssEvent: RunEvent = {
+      seq: 2,
+      type: '<img src=x onerror="window.__pwned=1">',
+      payload: {
+        xssField: '<img src=x onerror="window.__pwned=1">',
+      },
+      createdAt: new Date().toISOString(),
+    };
+
+    const { container } = render(<EventDetailPanel event={xssEvent} />);
+
+    // biome-ignore lint/suspicious/noExplicitAny: verify window property wasn't set
+    expect((window as any).__pwned).toBeUndefined();
+    expect(container.querySelectorAll("img").length).toBe(0);
+    expect(container.textContent).toContain("window.__pwned=1");
+  });
 });

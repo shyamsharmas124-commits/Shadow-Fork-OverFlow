@@ -1,4 +1,4 @@
-import type { EffectDiffResponse, RunDetail, RunSummary } from "./types.js";
+import type { EffectDiffResponse, RunDetail, RunsResponse } from "./types.js";
 
 const API_BASE = "/api";
 
@@ -6,7 +6,7 @@ export async function getRuns(params?: {
   status?: string;
   mode?: string;
   limit?: number;
-}): Promise<RunSummary[]> {
+}): Promise<RunsResponse> {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
   if (params?.mode) query.set("mode", params.mode);

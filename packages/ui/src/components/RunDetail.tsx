@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, Clock, GitFork, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { getEffects, getRun } from "../api.js";
 import type { RunEvent } from "../types.js";
+import { formatDate } from "../utils/date.js";
 import { ModeBadge, StatusBadge } from "./Badge.js";
 import { EventDetailPanel } from "./EventDetailPanel.js";
 import { EventTimeline } from "./EventTimeline.js";
@@ -85,6 +86,33 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
         </button>
       </div>
 
+      {/* Fork Provenance Banner */}
+      {run.mode === "shadow" && run.parentRunId && (
+        <div
+          data-testid="fork-provenance-banner"
+          className="flex flex-col gap-1 p-4 rounded-lg border border-purple-500/40 bg-purple-950/30 text-purple-200 text-xs shadow-md"
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            <GitFork className="w-4 h-4 text-purple-400 shrink-0" />
+            <span>
+              Shadow fork of{" "}
+              <button
+                type="button"
+                onClick={() => onSelectRun(run.parentRunId!)}
+                className="underline hover:text-purple-300 font-mono"
+              >
+                {run.parentRunId}
+              </button>{" "}
+              at seq {run.forkedFromSeq}: effectful steps were not executed against live services.
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px] pl-6">
+            State up to seq {run.forkedFromSeq} was seeded from parent history. Subsequent
+            side-effects were intercepted and captured safely.
+          </p>
+        </div>
+      )}
+
       {/* Header Info */}
       <div className="flex flex-col gap-3 p-5 rounded-lg border border-slate-800 bg-slate-900/50">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -99,7 +127,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
               Duration:{" "}
               {run.timing.durationMs !== null ? `${run.timing.durationMs}ms` : "In Progress"}
             </span>
-            <span>Created: {new Date(run.timing.createdAt).toLocaleString()}</span>
+            <span>Created: {formatDate(run.timing.createdAt)}</span>
           </div>
         </div>
 
@@ -181,7 +209,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
                     <td className="p-2.5">{task.attempt}</td>
                     <td className="p-2.5 text-slate-400">{task.leaseOwner ?? "None"}</td>
                     <td className="p-2.5 text-slate-400">
-                      {new Date(task.runAt).toLocaleTimeString()}
+                      {formatDate(task.runAt, { timeOnly: true })}
                     </td>
                   </tr>
                 ))}

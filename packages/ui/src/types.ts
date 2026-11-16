@@ -15,6 +15,11 @@ export interface RunSummary {
   };
 }
 
+export interface RunsResponse {
+  runs: RunSummary[];
+  total: number;
+}
+
 export interface RunEvent {
   seq: number;
   type: string;

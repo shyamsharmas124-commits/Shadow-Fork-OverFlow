@@ -1,4 +1,6 @@
+import { AlertTriangle, Sparkles } from "lucide-react";
 import type { EffectDiffItem, RunEvent } from "../types.js";
+import { formatDate } from "../utils/date.js";
 import { Badge } from "./Badge.js";
 
 interface EventDetailPanelProps {
@@ -15,8 +17,15 @@ export function EventDetailPanel({ event, stepDiff }: EventDetailPanelProps) {
     );
   }
 
-  const isReused = stepDiff?.reusedFromParent ?? false;
-  const isInputChanged = stepDiff?.inputChangedFromParent ?? false;
+  const p = (event.payload ?? {}) as Record<string, unknown>;
+  const isEffectCaptured = event.type === "EffectCaptured";
+
+  const isReused = (stepDiff?.reusedFromParent ?? false) || Boolean(p.reusedFromParent);
+  const isInputChanged =
+    (stepDiff?.inputChangedFromParent ?? false) || Boolean(p.inputChangedFromParent);
+  const resultSource =
+    (p.resultSource as string | undefined) ?? stepDiff?.shadow?.effects?.[0]?.resultSource;
+  const isMock = resultSource === "mock";
 
   return (
     <div
@@ -33,11 +42,43 @@ export function EventDetailPanel({ event, stepDiff }: EventDetailPanelProps) {
         <div className="flex items-center gap-2">
           {isReused && <Badge variant="cyan">reusedFromParent</Badge>}
           {isInputChanged && <Badge variant="warning">inputChangedFromParent</Badge>}
+          {isMock && <Badge variant="purple">mock</Badge>}
           <span className="text-xs text-slate-400">
-            {new Date(event.createdAt).toLocaleTimeString()}
+            {formatDate(event.createdAt, { timeOnly: true })}
           </span>
         </div>
       </div>
+
+      {/* Warning banner when input was modified in fork but effect was reused from parent */}
+      {isInputChanged && isReused && (
+        <div
+          data-testid="reused-input-warning"
+          className="p-3 bg-amber-950/50 border border-amber-500/60 rounded text-amber-200 text-xs flex items-start gap-2.5"
+        >
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold">Provenance Warning:</span>
+            <span>This result is from the original run and was produced from different input.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Mock substitution explanation */}
+      {isEffectCaptured && isMock && (
+        <div
+          data-testid="mock-substitution-notice"
+          className="p-3 bg-purple-950/50 border border-purple-500/60 rounded text-purple-200 text-xs flex items-start gap-2.5"
+        >
+          <Sparkles className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold">Mock Substitution:</span>
+            <span>
+              This effect used an injected mock rather than calling the real external connector. The
+              step succeeded using simulated responses.
+            </span>
+          </div>
+        </div>
+      )}
 
       {stepDiff && (
         <div className="p-3 bg-slate-950/80 rounded border border-slate-800 text-xs flex flex-col gap-2">
@@ -54,6 +95,14 @@ export function EventDetailPanel({ event, stepDiff }: EventDetailPanelProps) {
               <span className="text-slate-500">Diff Status: </span>
               <span className="font-semibold capitalize text-purple-400">{stepDiff.status}</span>
             </div>
+            {resultSource && (
+              <div className="col-span-2">
+                <span className="text-slate-500">Result Source: </span>
+                <span className="font-mono text-purple-300 font-medium capitalize">
+                  {resultSource}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, GitFork, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { getRuns } from "../api.js";
+import { formatDate } from "../utils/date.js";
 import { ModeBadge, StatusBadge } from "./Badge.js";
 
 interface RunListProps {
@@ -14,12 +15,7 @@ export function RunList({ onSelectRun }: RunListProps) {
   const [page, setPage] = useState<number>(1);
   const pageSize = 10;
 
-  const {
-    data: runs = [],
-    isLoading,
-    error,
-    refetch,
-  } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["runs", statusFilter, modeFilter],
     queryFn: () =>
       getRuns({
@@ -30,7 +26,9 @@ export function RunList({ onSelectRun }: RunListProps) {
     refetchInterval: 5000,
   });
 
-  const totalPages = Math.ceil(runs.length / pageSize) || 1;
+  const runs = data?.runs ?? [];
+  const total = data?.total ?? runs.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
   const paginatedRuns = runs.slice((page - 1) * pageSize, page * pageSize);
 
   return (
@@ -146,7 +144,7 @@ export function RunList({ onSelectRun }: RunListProps) {
                       {r.timing.durationMs !== null ? `${r.timing.durationMs}ms` : "Running"}
                     </td>
                     <td className="p-3.5 font-sans text-slate-400">
-                      {new Date(r.timing.createdAt).toLocaleString()}
+                      {formatDate(r.timing.createdAt)}
                     </td>
                   </tr>
                 ))}
@@ -156,11 +154,11 @@ export function RunList({ onSelectRun }: RunListProps) {
         )}
 
         {/* Pagination Bar */}
-        {runs.length > pageSize && (
+        {total > pageSize && (
           <div className="flex items-center justify-between p-3 border-t border-slate-800 bg-slate-950/60 text-xs text-slate-400">
             <div>
-              Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, runs.length)} of{" "}
-              {runs.length} runs
+              Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total}{" "}
+              runs
             </div>
             <div className="flex items-center gap-2">
               <button
