@@ -30,6 +30,8 @@ export {
   Engine,
   type ExecuteOptions,
   type ForkEdit,
+  type ForkMockItem,
+  type ForkMocksOption,
   type ForkOptions,
   type RunOutcome,
   type WorkflowFn,

@@ -1379,4 +1379,107 @@ describe("Milestone 4b - Shadow Mode", () => {
       await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
     });
   });
+
+  describe("M4d Item 5 - Fork mocks for newly added steps", () => {
+    it("fails with clear error if new shadow step has no parent result and no mock", async () => {
+      const wf = `wf_fork_mock_fail_${randomUUID().slice(0, 8)}`;
+      let hasNewStep = false;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const r1 = await ctx.step("step-1", () => ({ val: 1 }), {});
+          let rInter = { inter: 0 };
+          if (hasNewStep) {
+            rInter = await ctx.step(
+              "step-new-intermediate",
+              () => ({ inter: 999 }),
+              {},
+              { kind: "effectful-external" },
+            );
+          }
+          const r2 = await ctx.step("step-2", () => ({ val: 2 }), {});
+          return { r1, rInter, r2 };
+        },
+      });
+
+      // 1. Parent runs with hasNewStep = false (only step-1 and step-2)
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      // 2. Fork at step-1 (seq 2), but workflow now introduces step-new-intermediate
+      hasNewStep = true;
+      const forkId = await engine.fork(parentId, 2, { input: {} });
+      const fOutcome = await engine.execute(forkId);
+
+      expect(fOutcome.status).toBe("failed");
+      if (fOutcome.status === "failed") {
+        expect(fOutcome.error).toContain(
+          "Step 'step-new-intermediate' has no parent result and no mock provided in shadow mode",
+        );
+      }
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+
+    it("runs to completion when newly added step is mocked via fork call", async () => {
+      const wf = `wf_fork_mock_success_${randomUUID().slice(0, 8)}`;
+      let hasNewStep = false;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const r1 = await ctx.step("step-1", () => ({ val: 1 }), {});
+          let rInter = { inter: 0 };
+          if (hasNewStep) {
+            rInter = await ctx.step(
+              "step-new-intermediate",
+              () => ({ inter: 999 }),
+              {},
+              { kind: "effectful-external" },
+            );
+          }
+          const r2 = await ctx.step("step-2", () => ({ val: 2 }), {});
+          return { r1, rInter, r2 };
+        },
+      });
+
+      // 1. Parent runs with hasNewStep = false
+      const parentId = await engine.startRun(wf, {});
+      const pOutcome = await engine.execute(parentId);
+      expect(pOutcome.status).toBe("completed");
+
+      // 2. Fork at step-1 (seq 2), providing mock for the new intermediate step
+      hasNewStep = true;
+      const forkId = await engine.fork(parentId, 2, {
+        mocks: {
+          "step-new-intermediate": { inter: 4242 },
+        },
+      });
+      const fOutcome = await engine.execute(forkId);
+
+      expect(fOutcome.status).toBe("completed");
+      if (fOutcome.status === "completed") {
+        expect(fOutcome.result).toEqual({
+          r1: { val: 1 },
+          rInter: { inter: 4242 },
+          r2: { val: 2 },
+        });
+      }
+
+      // Check events: EffectCaptured recorded with mocked result
+      const events = await loadEvents(pool, forkId);
+      const effectEvt = events.find(
+        (e) =>
+          e.type === "EffectCaptured" &&
+          (e.payload as { stepName: string }).stepName === "step-new-intermediate",
+      );
+      expect(effectEvt).toBeDefined();
+      expect((effectEvt!.payload as { resultSource: string }).resultSource).toBe("mock");
+      expect((effectEvt!.payload as { wouldHaveResult: unknown }).wouldHaveResult).toEqual({
+        inter: 4242,
+      });
+
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [parentId, forkId]);
+    });
+  });
 });

@@ -52,12 +52,19 @@ export interface Ctx {
   random(): Promise<number>;
 }
 
+export interface ForkMockItem {
+  stepName: string;
+  occurrence?: number;
+  result: unknown;
+}
+
 export interface ForkEditData {
   atSeq: number;
   stepName: string;
   occurrenceIndex: number;
   input?: unknown;
   result?: unknown;
+  mocks?: ForkMockItem[];
 }
 
 export interface RunContextOptions {
@@ -311,7 +318,17 @@ export class RunContext implements Ctx {
         (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === name,
       )[occurrence];
 
-      if (parentStepEvent && parentStepEvent.type === "StepCompleted") {
+      // Check for mock provided via fork() options
+      const forkMock = this.options.forkEdit?.mocks?.find(
+        (m) => m.stepName === name && (m.occurrence === undefined || m.occurrence === occurrence),
+      );
+
+      if (forkMock !== undefined) {
+        wouldHaveResult = forkMock.result;
+        resultSource = "mock";
+        reusedFromParent = false;
+        inputChangedFromParent = false;
+      } else if (parentStepEvent && parentStepEvent.type === "StepCompleted") {
         wouldHaveResult = (parentStepEvent.payload as { result: unknown }).result;
         resultSource = "original";
         reusedFromParent = true;
@@ -323,9 +340,7 @@ export class RunContext implements Ctx {
         reusedFromParent = false;
         inputChangedFromParent = false;
       } else {
-        throw new Error(
-          `Shadow mode: no recorded result found in parent run for step '${name}' (occurrence ${occurrence}), and no explicit mock was provided.`,
-        );
+        throw new Error(`Step '${name}' has no parent result and no mock provided in shadow mode`);
       }
     }
 

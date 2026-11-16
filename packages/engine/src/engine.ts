@@ -8,10 +8,36 @@ import { reapTasks } from "./leasing.js";
 // biome-ignore lint/suspicious/noExplicitAny: workflow I/O is user-defined JSON
 export type WorkflowFn = (ctx: Ctx, input: any) => Promise<unknown>;
 
-export type ForkEdit = { input: unknown } | { result: unknown };
+export type ForkMockItem = {
+  stepName: string;
+  occurrence?: number;
+  result: unknown;
+};
+
+export type ForkMocksOption = Record<string, unknown> | ForkMockItem[];
+
+export type ForkEdit =
+  | { input: unknown; mocks?: ForkMocksOption }
+  | { result: unknown; mocks?: ForkMocksOption }
+  | { mocks: ForkMocksOption };
 
 export interface ForkOptions extends ExecuteOptions {
   mode?: never;
+  mocks?: ForkMocksOption;
+}
+
+function normalizeMocks(mocks?: ForkMocksOption): ForkMockItem[] | undefined {
+  if (!mocks) return undefined;
+  if (Array.isArray(mocks)) {
+    return mocks;
+  }
+  if (typeof mocks === "object" && mocks !== null) {
+    return Object.entries(mocks).map(([stepName, result]) => ({
+      stepName,
+      result,
+    }));
+  }
+  return undefined;
 }
 
 export type RunOutcome =
@@ -181,8 +207,14 @@ export class Engine {
     edit: ForkEdit,
     options: ForkOptions = {},
   ): Promise<string> {
-    if (!edit || typeof edit !== "object" || (!("input" in edit) && !("result" in edit))) {
-      throw new Error("Invalid edit: must provide an object with either 'input' or 'result'");
+    if (
+      !edit ||
+      typeof edit !== "object" ||
+      (!("input" in edit) && !("result" in edit) && !("mocks" in edit))
+    ) {
+      throw new Error(
+        "Invalid edit: must provide an object with either 'input', 'result', or 'mocks'",
+      );
     }
     if ((options as Record<string, unknown>).mode !== undefined) {
       throw new Error("Forks are always shadow: specifying mode is not supported.");
@@ -235,10 +267,16 @@ export class Engine {
       await client.query("BEGIN");
 
       // 1. Create the new forked run (mode is stored on run row: default 'shadow' for forks)
-      const forkEditData =
-        "input" in edit
-          ? { atSeq, stepName: stepPayload.name, occurrenceIndex, input: edit.input }
-          : null;
+      const mocksToApply = ("mocks" in edit ? edit.mocks : undefined) ?? options.mocks;
+      const normalizedMocks = normalizeMocks(mocksToApply);
+      const forkEditData: ForkEditData = {
+        atSeq,
+        stepName: stepPayload.name,
+        occurrenceIndex,
+        input: "input" in edit ? edit.input : "result" in edit ? undefined : stepPayload.input,
+        result: "result" in edit ? edit.result : undefined,
+        mocks: normalizedMocks,
+      };
       const { rows: runRows } = await client.query<{ id: string }>(
         `INSERT INTO runs (workflow_type, input, parent_run_id, forked_from_seq, fork_edit, mode)
          VALUES ($1, $2, $3, $4, $5, $6)
