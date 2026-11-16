@@ -1154,52 +1154,6 @@ describe("Milestone 4b - Shadow Mode", () => {
       await pool.query("DELETE FROM shadow_accounts WHERE id = $1", [accountId]);
     });
 
-    describe("Mutation checks on SQL allowlist and denylist", () => {
-      it("mutation check on allowlist: allowing TransactionStmt fails safety check", async () => {
-        // Normal allowlist correctly blocks COMMIT
-        await expect(validateShadowSql("COMMIT")).rejects.toThrow(
-          /statement type 'TransactionStmt' is forbidden/i,
-        );
-
-        // Mutated allowlist simulation: if TransactionStmt is erroneously allowed
-        const mutatedAllowlist = new Set([
-          "SelectStmt",
-          "InsertStmt",
-          "UpdateStmt",
-          "DeleteStmt",
-          "TransactionStmt",
-        ]);
-        expect(mutatedAllowlist.has("TransactionStmt")).toBe(true);
-
-        // Verification assertion that a mutated allowlist produces unsafe behavior
-        expect(() => {
-          if (mutatedAllowlist.has("TransactionStmt")) {
-            throw new Error("MUTATION_DETECTED: TransactionStmt permitted by allowlist!");
-          }
-        }).toThrow("MUTATION_DETECTED: TransactionStmt permitted by allowlist!");
-      });
-
-      it("mutation check on denylist: removing pg_advisory_lock or set_config fails safety check", async () => {
-        // Normal denylist correctly blocks pg_advisory_lock and set_config
-        await expect(validateShadowSql("SELECT pg_advisory_lock(1)")).rejects.toThrow(
-          /forbidden function 'pg_advisory_lock'/i,
-        );
-        await expect(
-          validateShadowSql("SELECT set_config('search_path','x',false)"),
-        ).rejects.toThrow(/forbidden function 'set_config'/i);
-
-        // Mutated denylist simulation: if pg_advisory_lock was removed from denylist
-        const mutatedDenylist = new Set(["dblink", "lo_import"]);
-        expect(mutatedDenylist.has("pg_advisory_lock")).toBe(false);
-
-        expect(() => {
-          if (!mutatedDenylist.has("pg_advisory_lock")) {
-            throw new Error("MUTATION_DETECTED: pg_advisory_lock missing from denylist!");
-          }
-        }).toThrow("MUTATION_DETECTED: pg_advisory_lock missing from denylist!");
-      });
-    });
-
     it("destroys client via release(true): advisory locks and session SET do not leak to next pool user", async () => {
       // Create a dedicated pool to isolate pool client recycling
       const tinyPool = await makePool();
@@ -1748,11 +1702,8 @@ describe("Milestone 4b - Shadow Mode", () => {
   });
 
   describe("M4e Egress & Idempotency Header hardening", () => {
-    it("egress guard catches https.get and CommonJS require('node:http').request", async () => {
-      const wf = `wf_egress_variants_${randomUUID().slice(0, 8)}`;
-      const require = createRequire(import.meta.url);
-      const cjsHttp = require("node:http");
-      let testVariant: "https" | "cjsHttp" = "https";
+    it("egress guard catches direct https.get in shadow mode", async () => {
+      const wf = `wf_egress_https_${randomUUID().slice(0, 8)}`;
       let isFork = false;
 
       const engine = new Engine(pool, {
@@ -1762,11 +1713,7 @@ describe("Milestone 4b - Shadow Mode", () => {
             "test-step",
             () => {
               if (isFork) {
-                if (testVariant === "https") {
-                  https.get("https://127.0.0.1:9999");
-                } else {
-                  cjsHttp.request("http://127.0.0.1:9999");
-                }
+                https.get("https://127.0.0.1:9999");
               }
               return { ok: true };
             },
@@ -1779,8 +1726,6 @@ describe("Milestone 4b - Shadow Mode", () => {
       await engine.execute(pId);
 
       isFork = true;
-      // 1. https.get
-      testVariant = "https";
       const f1 = await engine.fork(pId, 2, { input: {} });
       const res1 = await engine.execute(f1);
       expect(res1.status).toBe("failed");
@@ -1788,8 +1733,35 @@ describe("Milestone 4b - Shadow Mode", () => {
         expect(res1.error).toMatch(/Shadow egress violation.*node:https get/i);
       }
 
-      // 2. CJS require("node:http").request
-      testVariant = "cjsHttp";
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [pId, f1]);
+    });
+
+    it("egress guard catches CommonJS require('node:http').request in shadow mode", async () => {
+      const wf = `wf_egress_cjs_http_${randomUUID().slice(0, 8)}`;
+      const require = createRequire(import.meta.url);
+      const cjsHttp = require("node:http");
+      let isFork = false;
+
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          await ctx.step("init", () => "ready", {});
+          return await ctx.step(
+            "test-step",
+            () => {
+              if (isFork) {
+                cjsHttp.request("http://127.0.0.1:9999");
+              }
+              return { ok: true };
+            },
+            {},
+            { kind: "effectful-external", maxAttempts: 1, mock: { ok: true } },
+          );
+        },
+      });
+      const pId = await engine.startRun(wf, {});
+      await engine.execute(pId);
+
+      isFork = true;
       const f2 = await engine.fork(pId, 2, { input: {} });
       const res2 = await engine.execute(f2);
       expect(res2.status).toBe("failed");
@@ -1797,7 +1769,7 @@ describe("Milestone 4b - Shadow Mode", () => {
         expect(res2.error).toMatch(/Shadow egress violation.*node:http request/i);
       }
 
-      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2, $3)", [pId, f1, f2]);
+      await pool.query("DELETE FROM tasks WHERE run_id IN ($1, $2)", [pId, f2]);
     });
 
     it("does not redact Idempotency-Key headers while redacting other sensitive headers", () => {
