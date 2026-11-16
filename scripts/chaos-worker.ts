@@ -114,14 +114,14 @@ async function runWorkerProcess() {
 
   worker.start();
 
-  // Periodic reaper inside worker process
+  // Periodic reaper inside worker process (worker-driven autonomous recovery)
   const reaperInterval = setInterval(async () => {
     try {
       await engine.reap();
     } catch {
       // Ignored during shutdown or crash
     }
-  }, 400);
+  }, 200);
 
   const shutdown = async () => {
     clearInterval(reaperInterval);

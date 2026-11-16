@@ -4,7 +4,7 @@ import { type ChildProcess, fork } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import { Engine, loadEvents, reapTasks } from "../packages/engine/src/index.js";
+import { Engine, loadEvents } from "../packages/engine/src/index.js";
 import { CHAOS_WORKFLOW_TYPE, chaosRecoveryWorkflow } from "./chaos-worker.js";
 
 const { Pool } = pg;
@@ -165,12 +165,6 @@ export async function runChaosIteration(
         }
       }
     }
-    // Reap expired leases actively
-    try {
-      await reapTasks(pool, new Date(), [CHAOS_WORKFLOW_TYPE]);
-    } catch {
-      // Ignore
-    }
   }, 250);
 
   // 6. Monitor workflow completion
@@ -186,9 +180,6 @@ export async function runChaosIteration(
   while (Date.now() - startTime < maxDurationMs) {
     const completed = await checkCompletion();
     if (completed === numWorkflows) break;
-    try {
-      await reapTasks(pool, new Date(), [CHAOS_WORKFLOW_TYPE]);
-    } catch {}
     await new Promise((r) => setTimeout(r, 200));
   }
 
