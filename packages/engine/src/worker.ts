@@ -56,6 +56,9 @@ export class Worker {
   async tick(): Promise<boolean> {
     if (this.killed) return false;
     const types = this.engine.getWorkflowTypes();
+    // Autonomous recovery: reap expired tasks for registered workflows so stalled tasks are recovered by workers
+    await this.engine.reap(this.clock.now(), types.length > 0 ? types : undefined).catch(() => {});
+
     const task = await claimTask(
       this.engine.getPool(),
       this.workerId,
