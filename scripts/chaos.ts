@@ -327,7 +327,23 @@ async function main() {
     console.error("Some chaos iterations failed!");
     process.exit(1);
   }
-  console.log("All 5 chaos iterations passed with 100% completion, at-least-once network attempts carrying identical idempotency keys, and exactly-once event log recording!");
+
+  const totalWorkflows = reports.reduce((s, r) => s + r.workflowsTotal, 0);
+  const totalCompleted = reports.reduce((s, r) => s + r.workflowsCompleted, 0);
+  const totalKilled = reports.reduce((s, r) => s + r.workersKilled, 0);
+  const totalRaw = reports.reduce((s, r) => s + r.rawRequests, 0);
+  const totalUnique = reports.reduce((s, r) => s + r.uniqueKeys, 0);
+  const totalDupAttempts = reports.reduce((s, r) => s + r.duplicateAttempts, 0);
+
+  if (totalDupAttempts > 0) {
+    console.log(
+      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), ${totalDupAttempts} duplicate network attempts verified carrying identical idempotency keys (${totalRaw} raw requests, ${totalUnique} unique keys), and exactly-once event log recording (0 duplicate StepCompleted events across all runs)!`,
+    );
+  } else {
+    console.log(
+      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), 0 duplicate network attempts observed (${totalRaw} raw requests, ${totalUnique} unique keys), and exactly-once event log recording (0 duplicate StepCompleted events across all runs)!`,
+    );
+  }
   process.exit(0);
 }
 
