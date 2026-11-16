@@ -18,7 +18,6 @@ import {
   ShadowEgressError,
   ShadowSqlConnector,
   type StepContext,
-  validateShadowSql,
 } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
