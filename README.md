@@ -215,14 +215,12 @@ Open **http://localhost:5173** to inspect execution runs, event timelines, appro
 The design and architecture of `durable` draw directly upon established paradigms in distributed systems and database research:
 
 1. **Temporal / Cadence**:
-   - Official Documentation: [Temporal Workflow Concepts](https://docs.temporal.io/workflows) (`#event-history`, `#replay`, `#deterministic-constraints`, fetched November 16, 2026).
-   - **Deterministic Event-Sourced Replay**: Temporal establishes that a worker re-executes workflow definition code from the beginning, replaying an append-only event history to recreate memory state rather than snapshotting memory. Side effects recorded during previous attempts are fed back without re-executing.
-   - **Determinism Verification**: If re-execution branches unexpectedly or step inputs mismatch historical events, execution halts immediately with a non-determinism error. Ambient non-determinism (system clocks, raw pseudo-randomness) must be intercepted or mediated through deterministic wrappers (`ctx.now()`, `ctx.random()`).
+   - Official Documentation: [Temporal Workflow Concepts](https://docs.temporal.io/workflows) (sections `#event-history`, `#replay`, `#deterministic-constraints`, fetched November 16, 2026).
+   - **Deterministic Event-Sourced Replay**: A worker re-executes workflow definition code from the beginning, using [replay](https://docs.temporal.io/workflows#replay) against an append-only event history to rebuild in-memory state rather than restoring snapshots.
+   - **Deterministic Constraints**: Workflow code must be deterministic so that replay generates identical command sequences; deviations trigger non-determinism errors (see [Deterministic Constraints](https://docs.temporal.io/workflows#deterministic-constraints)). Ambient side-effects and local clocks cannot be called directly inside workflow orchestration.
 
 2. **DBOS (Database-Oriented Operating System)**:
-   - Publications:
-     - Qian Ge, Yale Yu, Henri Bikakis, Peter Kraft, Michael Stonebraker, Matei Zaharia, et al. *"A Progress Report on DBOS: A Database-oriented Operating System."* In *Proceedings of the Conference on Innovative Data Systems Research (CIDR)*, 2022. URL: https://www.cidrdb.org/cidr2022/papers/p27-ge.pdf
-     - Qian Ge, Yale Yu, Henri Bikakis, Peter Kraft, Michael Stonebraker, Matei Zaharia, et al. *"DBOS: A DBMS-oriented Operating System."* In *Proceedings of the VLDB Endowment (VLDB)*, Vol. 15, 2022.
-   - Official Documentation: [DBOS Architecture & Durable Execution](https://docs.dbos.dev/) (fetched November 16, 2026).
-   - **Postgres-Centric Durability**: DBOS demonstrates that modern relational databases (PostgreSQL) provide an ideal, unified foundation for durable execution without requiring a separate orchestration cluster or custom Raft engine.
-   - **Transactional Queues & State**: Leveraging PostgreSQL ACID transactions, atomic row-level leasing (`SELECT ... FOR UPDATE SKIP LOCKED`), and checkpointed event tables enables rock-solid recovery, linear horizontal sharding, and complete workflow lifecycle management with zero extraneous infrastructure.
+   - Publication:
+     - Qian Li, Peter Kraft, Kostis Kaffes, Athinagoras Skiadopoulos, Deeptaanshu Kumar, Jason Li, Michael Cafarella, Goetz Graefe, Jeremy Kepner, Christos Kozyrakis, Michael Stonebraker, Lalith Suresh, Matei Zaharia. *"A Progress Report on DBOS: A Database-oriented Operating System."* In *Proceedings of the Conference on Innovative Data Systems Research (CIDR)*, 2022. URL: http://cidrdb.org/cidr2022/papers/p13-li.pdf
+   - Documentation: [DBOS Architecture & Durable Execution](https://docs.dbos.dev/) (fetched November 16, 2026).
+   - **Database-Centric Durability**: DBOS demonstrates managing workflow state, task queues, and execution history directly within PostgreSQL using relational transactions and row-level locking clauses (`SELECT ... FOR UPDATE SKIP LOCKED`), eliminating the need for a separate consensus cluster.
