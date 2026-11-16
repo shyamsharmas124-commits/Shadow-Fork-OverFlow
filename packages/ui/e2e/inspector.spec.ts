@@ -382,6 +382,8 @@ test("03. Diff View displays 'Failed in Parent' badge with parent error for fail
   const parentError = chargeStepCard.locator('[data-testid="diff-parent-error"]');
   await expect(parentError).toBeVisible();
   await expect(parentError).toContainText("CardDeclined: insufficient funds");
+  await expect(parentError).not.toContainText("tok_visa_4242");
+  await expect(parentError).toContainText("[REDACTED_KEY]");
 
   // Assert shadow side displays mock result
   await expect(chargeStepCard).toContainText("tx_mock_override_999");

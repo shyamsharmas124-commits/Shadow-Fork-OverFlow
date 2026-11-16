@@ -10,6 +10,7 @@ import {
   Engine,
   type ForkOptions,
   loadEvents,
+  makeIdempotencyKey,
   RunContext,
   redactApiOutput,
   redactHeaders,
@@ -145,6 +146,55 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(serializedEvents).not.toContain("secret_session_cookie");
       expect(serializedEvents).not.toContain("sensitive_data");
       expect(serializedEvents).not.toContain("my_api_key_xyz");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("live HTTP connector: request carries Idempotency-Key header received by server", async () => {
+    let receivedIdempotencyKey: string | undefined;
+    const server = http.createServer((req, res) => {
+      receivedIdempotencyKey = req.headers["idempotency-key"] as string | undefined;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const url = `http://127.0.0.1:${port}/charge`;
+
+    try {
+      const wf = `wf_live_idempotency_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          return await ctx.step(
+            "payment-step",
+            async (_inp, sctx: StepContext) => {
+              const res = await sctx.http.fetch({
+                url,
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Idempotency-Key": sctx.idempotencyKey,
+                },
+                body: { charge: 100 },
+              });
+              return res.body;
+            },
+            {},
+          );
+        },
+      });
+
+      const runId = await engine.startRun(wf, {});
+      const outcome = await engine.execute(runId);
+      expect(outcome.status).toBe("completed");
+
+      // Verify server received exact idempotency key: runId:payment-step
+      const expectedKey = makeIdempotencyKey(runId, "payment-step");
+      expect(receivedIdempotencyKey).toBe(expectedKey);
+      expect(receivedIdempotencyKey).toBe(`${runId}:payment-step`);
+
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -1397,22 +1447,28 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(redactStringValue("bearer-token: sk-abcdef123456789012345678")).toBe(
         "bearer-token: [REDACTED_KEY]",
       );
+      expect(
+        redactStringValue("CardDeclined: insufficient funds on card tok_visa_4242"),
+      ).toBe("CardDeclined: insufficient funds on card [REDACTED_KEY]");
       const jwtToken =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0.4SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5";
       const openaiKey = "sk-abcdef123456789012345678";
       const githubKey = "ghp_123456789012345678901234567890";
       const awsKey = "AKIAIOSFODNN7EXAMPLE";
+      const stripeToken = "tok_visa_4242";
 
       // 1. Headers (with non-sensitive field names)
       const headers = redactHeaders({
         "x-custom-jwt": jwtToken,
         "x-trace-id": `User session with ${openaiKey}`,
         "x-aws": awsKey,
+        "x-card": stripeToken,
         "x-normal": "harmless-value",
       });
       expect(headers["x-custom-jwt"]).toBe("[REDACTED_JWT]");
       expect(headers["x-trace-id"]).toBe("User session with [REDACTED_KEY]");
       expect(headers["x-aws"]).toBe("[REDACTED_KEY]");
+      expect(headers["x-card"]).toBe("[REDACTED_KEY]");
       expect(headers["x-normal"]).toBe("harmless-value");
 
       // 2. URL path & non-sensitive query parameter

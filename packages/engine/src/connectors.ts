@@ -35,7 +35,7 @@ export interface CapturedEffect {
 
 /**
  * Best-effort redaction of sensitive patterns within string values:
- * Bearer tokens, JWT tokens, and common API key prefixes (sk-, ghp_, AKIA).
+ * Bearer tokens, JWT tokens, and common API key / token prefixes (sk-, ghp_, AKIA, tok_).
  */
 export function redactStringValue(val: string): string {
   return val
@@ -43,7 +43,8 @@ export function redactStringValue(val: string): string {
     .replace(/\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, "[REDACTED_JWT]")
     .replace(/\bsk-[a-zA-Z0-9_-]{20,}\b/g, "[REDACTED_KEY]")
     .replace(/\bghp_[a-zA-Z0-9]{30,}\b/g, "[REDACTED_KEY]")
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED_KEY]");
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED_KEY]")
+    .replace(/\btok_[a-zA-Z0-9_]{4,}\b/g, "[REDACTED_KEY]");
 }
 
 export const SECRET_FIELD_ALLOWLIST = new Set([
