@@ -10,7 +10,7 @@ export const DUPLICATE_WINDOW_WORKFLOW_TYPE = "duplicate_window_recovery_workflo
 export async function duplicateWindowWorkflow(
   ctx: Ctx,
   input: { countingServerUrl: string },
-): Promise<{ payment: any }> {
+): Promise<{ payment: unknown }> {
   const payment = await ctx.step(
     "charge-payment",
     async (inp: { countingServerUrl: string }, stepCtx: StepContext) => {

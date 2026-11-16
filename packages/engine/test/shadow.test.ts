@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import http, { request as esmHttpRequest } from "node:http";
 import https from "node:https";
 import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -1447,9 +1448,9 @@ describe("Milestone 4b - Shadow Mode", () => {
       expect(redactStringValue("bearer-token: sk-abcdef123456789012345678")).toBe(
         "bearer-token: [REDACTED_KEY]",
       );
-      expect(
-        redactStringValue("CardDeclined: insufficient funds on card tok_visa_4242"),
-      ).toBe("CardDeclined: insufficient funds on card [REDACTED_KEY]");
+      expect(redactStringValue("CardDeclined: insufficient funds on card tok_visa_4242")).toBe(
+        "CardDeclined: insufficient funds on card [REDACTED_KEY]",
+      );
       const jwtToken =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0.4SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5";
       const openaiKey = "sk-abcdef123456789012345678";

@@ -59,9 +59,7 @@ describe("Deterministic Duplicate-Window Test (Real OS Processes & SIGKILL)", ()
     }
   });
 
-  it(
-    "kills worker with SIGKILL during post-request / pre-commit window: counting server receives exactly 2 requests with identical Idempotency-Key and DB records exactly 1 StepCompleted",
-    async () => {
+  it("kills worker with SIGKILL during post-request / pre-commit window: counting server receives exactly 2 requests with identical Idempotency-Key and DB records exactly 1 StepCompleted", async () => {
     // 1. External Counting Server (count-only mode, no receiver deduplication)
     const serverRequests: Array<{ key: string; rawBody: string }> = [];
     let resolveFirstRequest: () => void;
@@ -186,7 +184,8 @@ describe("Deterministic Duplicate-Window Test (Real OS Processes & SIGKILL)", ()
       // (c) Database event log has strictly 1 StepCompleted event for the step
       const finalEvents = await loadEvents(pool, runId);
       const stepCompletedFinal = finalEvents.filter(
-        (e) => e.type === "StepCompleted" && (e.payload as { name: string }).name === "charge-payment",
+        (e) =>
+          e.type === "StepCompleted" && (e.payload as { name: string }).name === "charge-payment",
       );
       expect(stepCompletedFinal.length).toBe(1);
 
