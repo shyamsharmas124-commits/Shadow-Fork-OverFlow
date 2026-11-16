@@ -72,3 +72,31 @@ export async function forkRun(
   }
   return res.json();
 }
+
+export async function submitApprovalApi(
+  runId: string,
+  approvalName: string,
+  decision: "approve" | "reject",
+  note?: string,
+  apiToken?: string,
+): Promise<{ success: boolean; eventSeq: number; decision: "approve" | "reject"; status: string }> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiToken) {
+    headers.Authorization = `Bearer ${apiToken}`;
+  }
+  const res = await fetch(
+    `${API_BASE}/runs/${runId}/approvals/${encodeURIComponent(approvalName)}`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ decision, note }),
+    },
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `Approval failed: ${res.statusText}`);
+  }
+  return res.json();
+}

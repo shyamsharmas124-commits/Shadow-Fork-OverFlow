@@ -1191,4 +1191,96 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       await pool.query("DELETE FROM tasks WHERE run_id = ANY($1::uuid[])", [runIds]);
     });
   });
+
+  describe("POST /runs/:id/approvals/:name Human-in-the-Loop", () => {
+    it("submits approval, records decision event, resumes execution, and returns 200", async () => {
+      const wf = `wf_api_approval_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => {
+          const a = await ctx.step("s1", () => 42, {});
+          const appr = await ctx.waitForApproval("gate-1", { val: a });
+          const b = await ctx.step("s2", () => a * 2, {});
+          return { a, appr, b };
+        },
+      });
+      const app = createApiApp({ engine, pool });
+
+      const runId = await engine.startRun(wf, {});
+      await engine.execute(runId);
+
+      // Verify parked
+      const resParked = await app.request(`/runs/${runId}`);
+      const bodyParked = (await resParked.json()) as { status: string };
+      expect(bodyParked.status).toBe("running");
+
+      // Submit approval via HTTP API
+      const resApprove = await app.request(`/runs/${runId}/approvals/gate-1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "approve", note: "API approval ok" }),
+      });
+      expect(resApprove.status).toBe(200);
+      const bodyApprove = (await resApprove.json()) as {
+        success: boolean;
+        decision: string;
+        status: string;
+      };
+      expect(bodyApprove.success).toBe(true);
+      expect(bodyApprove.decision).toBe("approve");
+      expect(bodyApprove.status).toBe("completed");
+
+      // Verify completed run detail
+      const resDone = await app.request(`/runs/${runId}`);
+      const bodyDone = (await resDone.json()) as { status: string; events: Array<{ type: string }> };
+      expect(bodyDone.status).toBe("completed");
+      expect(bodyDone.events.some((e) => e.type === "ApprovalGranted")).toBe(true);
+
+      // Clean up tasks
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+    });
+
+    it("requires Bearer token on mutating approval endpoint when API_TOKEN is configured", async () => {
+      const token = "secret-token-approval-123";
+      const wf = `wf_api_approval_token_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, {
+        [wf]: async (ctx: Ctx) => ctx.waitForApproval("token-gate"),
+      });
+      const app = createApiApp({ engine, pool, apiToken: token, host: "127.0.0.1" });
+
+      const runId = await engine.startRun(wf, {});
+      await engine.execute(runId);
+
+      // 1. Missing Authorization header -> 401
+      const resMissing = await app.request(`/runs/${runId}/approvals/token-gate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "approve" }),
+      });
+      expect(resMissing.status).toBe(401);
+
+      // 2. Wrong token -> 401
+      const resWrong = await app.request(`/runs/${runId}/approvals/token-gate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong-token",
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      });
+      expect(resWrong.status).toBe(401);
+
+      // 3. Correct token -> 200
+      const resOk = await app.request(`/runs/${runId}/approvals/token-gate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      });
+      expect(resOk.status).toBe(200);
+
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+    });
+  });
 });

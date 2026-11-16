@@ -470,3 +470,56 @@ test("04. XSS Safety & In-Memory Token Isolation", async ({ page }) => {
     expect(cookie.value).not.toContain(testToken);
   }
 });
+
+test("05. Approval Gate UI: displays pending approval card, user approves, and workflow completes", async ({
+  page,
+}) => {
+  const approvalWf = `wf_approval_ui_${randomUUID().slice(0, 8)}`;
+  engine.register(approvalWf, async (ctx: Ctx) => {
+    const order = await ctx.step("step-create-order", () => ({ orderId: "ord_777", amount: 4500 }), {});
+    const decision = await ctx.waitForApproval("finance-director", {
+      orderId: order.orderId,
+      amount: order.amount,
+      riskLevel: "medium",
+    });
+    const ship = await ctx.step(
+      "step-ship-order",
+      () => ({ shipped: true, approvedBy: decision.decision }),
+      {},
+    );
+    return { order, decision, ship };
+  });
+
+  // 1. Initial run parks at approval gate
+  const runId = await engine.startRun(approvalWf, {});
+  await engine.execute(runId);
+
+  // 2. Open Run Detail in Inspector UI
+  await page.goto(`http://localhost:5173/#${runId}`);
+  await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // 3. Verify Pending Approval Card is displayed with payload
+  const approvalCard = page.locator('[data-testid="pending-approval-card-finance-director"]');
+  await expect(approvalCard).toBeVisible();
+  await expect(approvalCard).toContainText('Action Required: Human Approval Gate');
+  await expect(approvalCard).toContainText('finance-director');
+  await expect(approvalCard).toContainText('"riskLevel": "medium"');
+
+  // Screenshot 7: Pending Approval Gate
+  const screenshot7 = resolve(screenshotsDir, "07-approval-gate.png");
+  await page.screenshot({ path: screenshot7, fullPage: true });
+  expect(statSync(screenshot7).size).toBeGreaterThan(0);
+
+  // 4. Click Approve button
+  const approveBtn = page.locator('[data-testid="approve-btn-finance-director"]');
+  await expect(approveBtn).toBeVisible();
+  await approveBtn.click();
+
+  // 5. Verify run updates and completes
+  await expect(page.locator("h1")).toContainText(runId);
+  const statusBadge = page.locator('[data-testid="run-detail-view"]').locator('text=Completed');
+  await expect(statusBadge.first()).toBeVisible();
+
+  // Assert pending card is dismissed
+  await expect(approvalCard).not.toBeVisible();
+});

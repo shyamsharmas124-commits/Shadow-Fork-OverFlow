@@ -1,7 +1,13 @@
 import type { Pool } from "pg";
 import { type Clock, SystemClock } from "./clock.js";
 import { type Ctx, type ForkEditData, RunContext, type RunContextOptions } from "./context.js";
-import { CrashSignal, FencingError, NonDeterminismError, StepRetryingSignal } from "./errors.js";
+import {
+  CrashSignal,
+  FencingError,
+  NonDeterminismError,
+  ParkedSignal,
+  StepRetryingSignal,
+} from "./errors.js";
 import { appendEvent, loadEvents, type StoredEvent } from "./events.js";
 import { reapTasks } from "./leasing.js";
 
@@ -204,6 +210,9 @@ export class Engine {
           retrying: { step: e.step, attempt: e.attempt, runAt: e.runAt },
         };
       }
+      if (e instanceof ParkedSignal) {
+        return { status: "running" };
+      }
 
       const error = e instanceof Error ? e.message : String(e);
 
@@ -380,6 +389,67 @@ export class Engine {
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async submitApproval(
+    runId: string,
+    name: string,
+    options: { decision: "approve" | "reject"; note?: string },
+  ): Promise<{ success: boolean; eventSeq: number; decision: "approve" | "reject" }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: runRows } = await client.query<{ id: string; status: string }>(
+        `SELECT id, status FROM runs WHERE id = $1 FOR UPDATE`,
+        [runId],
+      );
+      if (runRows.length === 0) {
+        throw new Error(`Run not found: ${runId}`);
+      }
+
+      // Check if already approved/rejected (Idempotency)
+      const events = await loadEvents(client, runId);
+      const existing = events.find(
+        (e) =>
+          (e.type === "ApprovalGranted" || e.type === "ApprovalRejected") &&
+          (e.payload as { name: string }).name === name,
+      );
+      if (existing) {
+        await client.query("COMMIT");
+        return {
+          success: true,
+          eventSeq: existing.seq,
+          decision: existing.type === "ApprovalGranted" ? "approve" : "reject",
+        };
+      }
+
+      let seq: number;
+      if (options.decision === "approve") {
+        seq = await appendEvent(client, runId, {
+          type: "ApprovalGranted",
+          payload: { name, decision: "approve", note: options.note },
+        });
+      } else {
+        seq = await appendEvent(client, runId, {
+          type: "ApprovalRejected",
+          payload: { name, decision: "reject", note: options.note },
+        });
+      }
+
+      // Enqueue task for workflow continuation
+      await client.query(
+        `INSERT INTO tasks (run_id, step_key, status, attempt, run_at) VALUES ($1, $2, 'pending', 0, $3)`,
+        [runId, name, this.clock.now()],
+      );
+
+      await client.query("COMMIT");
+      return { success: true, eventSeq: seq, decision: options.decision };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
     } finally {
       client.release();
     }

@@ -67,3 +67,22 @@ export class FencingError extends Error {
     this.name = "FencingError";
   }
 }
+
+/** Thrown when a workflow pauses waiting for external human approval. */
+export class ParkedSignal extends Error {
+  constructor(public readonly approvalName: string) {
+    super(`Run parked waiting for approval "${approvalName}"`);
+    this.name = "ParkedSignal";
+  }
+}
+
+/** Error thrown or returned when external approval was rejected. */
+export class ApprovalRejectedError extends Error {
+  constructor(
+    public readonly approvalName: string,
+    public readonly note?: string,
+  ) {
+    super(`Approval "${approvalName}" was rejected${note ? `: ${note}` : ""}`);
+    this.name = "ApprovalRejectedError";
+  }
+}

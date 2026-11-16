@@ -372,6 +372,11 @@ const RunsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().optional(),
 });
 
+const ApprovalBodySchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  note: z.string().optional(),
+});
+
 const ForkBodySchema = z
   .object({
     atSeq: z.number().int().positive({ message: "atSeq must be a positive integer" }),
@@ -1018,6 +1023,55 @@ export function createApiApp(options: CreateApiOptions): Hono {
           message: "Run still in progress",
         }),
       );
+    }
+  });
+
+  /**
+   * 6. POST /runs/:id/approvals/:name
+   * Submits an approval or rejection decision for a parked workflow.
+   * Idempotent: repeated calls with the same decision return 200 without appending duplicate events.
+   * Automatically enqueues a pending task and resumes workflow execution.
+   */
+  app.post("/runs/:id/approvals/:name", async (c) => {
+    const id = c.req.param("id");
+    const name = c.req.param("name");
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json(redactApiOutput({ error: "Invalid JSON body" }), 400);
+    }
+
+    const parseResult = ApprovalBodySchema.safeParse(rawBody);
+    if (!parseResult.success) {
+      return c.json(
+        redactApiOutput({
+          error: "Validation failed",
+          issues: parseResult.error.issues,
+        }),
+        400,
+      );
+    }
+
+    try {
+      const outcome = await engine.submitApproval(id, name, parseResult.data);
+      const runOutcome = await engine.execute(id);
+      return c.json(
+        redactApiOutput({
+          success: true,
+          eventSeq: outcome.eventSeq,
+          decision: outcome.decision,
+          status: runOutcome.status,
+        }),
+        200,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("Run not found")) {
+        return c.json(redactApiOutput({ error: message }), 404);
+      }
+      return c.json(redactApiOutput({ error: message }), 400);
     }
   });
 

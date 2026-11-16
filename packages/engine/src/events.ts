@@ -47,6 +47,26 @@ export const EventSchema = z.discriminatedUnion("type", [
     type: z.literal("RunResumed"),
     payload: z.object({ fromSeq: z.number(), resumedAt: z.string().optional() }),
   }),
+  z.object({
+    type: z.literal("ApprovalRequested"),
+    payload: z.object({ name: z.string(), payload: z.unknown().optional() }),
+  }),
+  z.object({
+    type: z.literal("ApprovalGranted"),
+    payload: z.object({
+      name: z.string(),
+      decision: z.literal("approve"),
+      note: z.string().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal("ApprovalRejected"),
+    payload: z.object({
+      name: z.string(),
+      decision: z.literal("reject"),
+      note: z.string().optional(),
+    }),
+  }),
 ]);
 
 export type EventData = z.infer<typeof EventSchema>;

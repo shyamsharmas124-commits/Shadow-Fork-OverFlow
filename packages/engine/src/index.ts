@@ -44,10 +44,12 @@ export {
   type WorkflowFn,
 } from "./engine.js";
 export {
+  ApprovalRejectedError,
   CrashSignal,
   EventConflictError,
   FencingError,
   NonDeterminismError,
+  ParkedSignal,
   StepFailedError,
   StepRetryingSignal,
   StepTimeoutError,

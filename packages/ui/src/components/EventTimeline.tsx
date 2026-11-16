@@ -31,11 +31,12 @@ export function EventTimeline({
         const isMock = p.resultSource === "mock";
 
         const getBadgeVariant = (type: string) => {
-          if (type === "RunCompleted") return "success";
-          if (type === "RunFailed" || type === "StepFailed") return "danger";
+          if (type === "RunCompleted" || type === "ApprovalGranted") return "success";
+          if (type === "RunFailed" || type === "StepFailed" || type === "ApprovalRejected")
+            return "danger";
           if (type === "EffectCaptured") return "purple";
           if (type === "StepCompleted") return "cyan";
-          if (type === "RunResumed") return "warning";
+          if (type === "RunResumed" || type === "ApprovalRequested") return "warning";
           return "default";
         };
 

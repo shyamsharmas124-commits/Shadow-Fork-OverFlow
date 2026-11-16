@@ -12,6 +12,7 @@ import {
   CrashSignal,
   FencingError,
   NonDeterminismError,
+  ParkedSignal,
   StepFailedError,
   StepRetryingSignal,
   StepTimeoutError,
@@ -48,6 +49,10 @@ export interface Ctx {
     input: I,
     options?: StepOptions,
   ): Promise<O>;
+  waitForApproval(
+    name: string,
+    payload?: unknown,
+  ): Promise<{ decision: "approve" | "reject"; note?: string }>;
   now(): Promise<number>;
   random(): Promise<number>;
 }
@@ -102,6 +107,7 @@ export class RunContext implements Ctx {
   private readonly runMode: "live" | "shadow";
   private readonly parentEvents?: StoredEvent[];
   private readonly stepOccurrences = new Map<string, number>();
+  private readonly approvalOccurrences: Record<string, number> = {};
 
   constructor(
     private readonly pool: Pool,
@@ -158,7 +164,10 @@ export class RunContext implements Ctx {
         recorded.type === "TimeRecorded" ||
         recorded.type === "RandomRecorded" ||
         recorded.type === "RunResumed" ||
-        recorded.type === "RunFailed"
+        recorded.type === "RunFailed" ||
+        recorded.type === "ApprovalRequested" ||
+        recorded.type === "ApprovalGranted" ||
+        recorded.type === "ApprovalRejected"
       ) {
         this.cursor++;
         continue;
@@ -570,5 +579,147 @@ export class RunContext implements Ctx {
 
   random(): Promise<number> {
     return this.recorded("RandomRecorded", () => Math.random());
+  }
+
+  async waitForApproval(
+    name: string,
+    payload?: unknown,
+  ): Promise<{ decision: "approve" | "reject"; note?: string }> {
+    const occ = this.approvalOccurrences[name] ?? 0;
+    this.approvalOccurrences[name] = occ + 1;
+
+    // 1. Check if an approval decision already exists in our run history
+    const matchingDecisions = this.history.filter(
+      (e) =>
+        (e.type === "ApprovalGranted" || e.type === "ApprovalRejected") &&
+        (e.payload as { name: string }).name === name,
+    );
+    const existingDecision = matchingDecisions[occ];
+    if (existingDecision) {
+      if (existingDecision.type === "ApprovalGranted") {
+        return {
+          decision: "approve",
+          note: (existingDecision.payload as { note?: string }).note,
+        };
+      }
+      return {
+        decision: "reject",
+        note: (existingDecision.payload as { note?: string }).note,
+      };
+    }
+
+    // 2. If running as a shadow fork, check parent run events for recorded decision
+    if (this.runMode === "shadow" && this.parentEvents) {
+      const parentDecisions = this.parentEvents.filter(
+        (e) =>
+          (e.type === "ApprovalGranted" || e.type === "ApprovalRejected") &&
+          (e.payload as { name: string }).name === name,
+      );
+      const parentDecision = parentDecisions[occ];
+      if (parentDecision) {
+        // Ensure ApprovalRequested is recorded in fork history
+        const hasRequested = this.history.some(
+          (e) =>
+            e.type === "ApprovalRequested" && (e.payload as { name: string }).name === name,
+        );
+        const client = await this.pool.connect();
+        try {
+          await client.query("BEGIN");
+          if (!hasRequested) {
+            await appendEvent(client, this.runId, {
+              type: "ApprovalRequested",
+              payload: { name, payload: payload ?? null },
+            });
+          }
+          if (parentDecision.type === "ApprovalGranted") {
+            await appendEvent(client, this.runId, {
+              type: "ApprovalGranted",
+              payload: {
+                name,
+                decision: "approve",
+                note: (parentDecision.payload as { note?: string }).note,
+              },
+            });
+          } else {
+            await appendEvent(client, this.runId, {
+              type: "ApprovalRejected",
+              payload: {
+                name,
+                decision: "reject",
+                note: (parentDecision.payload as { note?: string }).note,
+              },
+            });
+          }
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw err;
+        } finally {
+          client.release();
+        }
+
+        if (parentDecision.type === "ApprovalGranted") {
+          return {
+            decision: "approve",
+            note: (parentDecision.payload as { note?: string }).note,
+          };
+        }
+        return {
+          decision: "reject",
+          note: (parentDecision.payload as { note?: string }).note,
+        };
+      }
+      // If parent did NOT have a decision, DO NOT auto-approve: park instead!
+    }
+
+    // 3. Not approved yet: record ApprovalRequested if not already in history
+    const matchingRequests = this.history.filter(
+      (e) => e.type === "ApprovalRequested" && (e.payload as { name: string }).name === name,
+    );
+    if (!matchingRequests[occ]) {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await appendEvent(client, this.runId, {
+          type: "ApprovalRequested",
+          payload: { name, payload: payload ?? null },
+        });
+        // If there was an active task claimed, complete it so no task remains pending
+        if (this.options.activeTask) {
+          await completeTask(
+            client,
+            this.options.activeTask.id,
+            this.options.workerId ?? "default-worker",
+          );
+        } else {
+          await client.query(
+            `UPDATE tasks SET status = 'completed' WHERE run_id = $1 AND status = 'pending'`,
+            [this.runId],
+          );
+        }
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else if (this.options.activeTask) {
+      await completeTask(
+        this.pool,
+        this.options.activeTask.id,
+        this.options.workerId ?? "default-worker",
+      ).catch(() => {});
+    } else {
+      await this.pool
+        .query(
+          `UPDATE tasks SET status = 'completed' WHERE run_id = $1 AND status = 'pending'`,
+          [this.runId],
+        )
+        .catch(() => {});
+    }
+
+    // Park the run
+    throw new ParkedSignal(name);
   }
 }

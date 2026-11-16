@@ -1,10 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Clock, GitFork, RefreshCw, SplitSquareVertical } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  Clock,
+  GitFork,
+  RefreshCw,
+  ShieldAlert,
+  SplitSquareVertical,
+  X,
+} from "lucide-react";
 import { useState } from "react";
-import { getEffects, getRun } from "../api.js";
+import { getEffects, getRun, submitApprovalApi } from "../api.js";
 import type { RunEvent } from "../types.js";
 import { formatDate } from "../utils/date.js";
-import { ModeBadge, StatusBadge } from "./Badge.js";
+import { Badge, ModeBadge, StatusBadge } from "./Badge.js";
 import { DiffView } from "./DiffView.js";
 import { EventDetailPanel } from "./EventDetailPanel.js";
 import { EventTimeline } from "./EventTimeline.js";
@@ -22,6 +31,8 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
   const [isForkModalOpen, setIsForkModalOpen] = useState<boolean>(false);
   const [forkTargetEvent, setForkTargetEvent] = useState<RunEvent | null>(null);
   const [activeTab, setActiveTab] = useState<"timeline" | "diff">("timeline");
+  const [isSubmittingDecision, setIsSubmittingDecision] = useState<boolean>(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const {
     data: run,
@@ -39,6 +50,34 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
     queryFn: () => getEffects(runId),
     enabled: !!run,
   });
+
+  const pendingApprovals = run
+    ? (run.events
+        .filter((e) => e.type === "ApprovalRequested")
+        .map((e) => {
+          const payload = e.payload as { name: string; payload?: unknown };
+          const hasDecision = run.events.some(
+            (ev) =>
+              (ev.type === "ApprovalGranted" || ev.type === "ApprovalRejected") &&
+              (ev.payload as { name: string }).name === payload.name,
+          );
+          return hasDecision ? null : { seq: e.seq, name: payload.name, payload: payload.payload };
+        })
+        .filter(Boolean) as Array<{ seq: number; name: string; payload?: unknown }>)
+    : [];
+
+  const handleDecision = async (name: string, decision: "approve" | "reject") => {
+    try {
+      setIsSubmittingDecision(true);
+      setApprovalError(null);
+      await submitApprovalApi(runId, name, decision);
+      await refetch();
+    } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmittingDecision(false);
+    }
+  };
 
   if (runLoading) {
     return (
@@ -136,6 +175,67 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           </p>
         </div>
       )}
+
+      {/* Pending Approval Banners */}
+      {pendingApprovals.map((appr) => (
+        <div
+          key={appr.name}
+          data-testid={`pending-approval-card-${appr.name}`}
+          className="flex flex-col gap-3 p-4 rounded-xl border border-amber-500/60 bg-amber-950/40 text-amber-200 shadow-lg"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-amber-100">
+                    Action Required: Human Approval Gate
+                  </span>
+                  <Badge variant="warning">Awaiting Decision</Badge>
+                </div>
+                <span className="text-xs text-amber-300/80 font-mono">
+                  Gate: {appr.name} (Seq {appr.seq})
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid={`approve-btn-${appr.name}`}
+                onClick={() => handleDecision(appr.name, "approve")}
+                disabled={isSubmittingDecision}
+                className="px-3.5 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white cursor-pointer shadow flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" /> Approve
+              </button>
+              <button
+                type="button"
+                data-testid={`reject-btn-${appr.name}`}
+                onClick={() => handleDecision(appr.name, "reject")}
+                disabled={isSubmittingDecision}
+                className="px-3.5 py-1.5 rounded text-xs font-semibold bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white cursor-pointer shadow flex items-center gap-1.5"
+              >
+                <X className="w-3.5 h-3.5" /> Reject
+              </button>
+            </div>
+          </div>
+          {appr.payload !== undefined && appr.payload !== null && (
+            <div className="mt-1">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                Approval Request Payload
+              </span>
+              <pre className="p-2.5 bg-slate-950/90 border border-slate-800 rounded font-mono text-xs text-slate-200 overflow-x-auto whitespace-pre-wrap break-all">
+                <code>{JSON.stringify(appr.payload, null, 2)}</code>
+              </pre>
+            </div>
+          )}
+          {approvalError && (
+            <div className="text-xs text-rose-400 bg-rose-950/50 p-2 rounded border border-rose-800">
+              {approvalError}
+            </div>
+          )}
+        </div>
+      ))}
 
       {/* Header Info */}
       <div className="flex flex-col gap-3 p-5 rounded-lg border border-slate-800 bg-slate-900/50">
