@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "pnpm -r test",
+    "api": "pnpm --filter @durable/api dev",
+    "ui": "pnpm --filter @durable/ui dev",
+    "migrate": "pnpm --filter @durable/engine migrate",
     "demo": "tsx packages/demo/src/run-demo.ts",
     "chaos": "tsx scripts/chaos.ts",
+    "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "biome check .",
     "format": "biome format --write ."
