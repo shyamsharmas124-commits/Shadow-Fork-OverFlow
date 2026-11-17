@@ -791,7 +791,7 @@ export function createApiApp(options: CreateApiOptions): Hono {
        LIMIT 100`,
     );
 
-    const now = new Date().getTime();
+    const now = Date.now();
 
     const workers = workerRows.map((w) => {
       const activeCount = Number.parseInt(w.active_tasks_count || "0", 10);
