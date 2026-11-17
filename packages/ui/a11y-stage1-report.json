@@ -32,8 +32,21 @@
     "violations": []
   },
   "Diff View (Light)": {
-    "violationsCount": 0,
-    "violations": []
+    "violationsCount": 1,
+    "violations": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+        "nodeCount": 1,
+        "sampleFailure": "Fix any of the following:\n  Element has insufficient color contrast of 3.87 (foreground color: #6b655e, background color: #edcdc5, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1",
+        "targets": [
+          [
+            ".animate-tint-flash > .pb-1.border-b.justify-between > .text-\\[var\\(--ink-muted\\)\\].text-\\[10px\\]"
+          ]
+        ]
+      }
+    ]
   },
   "Diff View (Dark)": {
     "violationsCount": 0,

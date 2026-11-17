@@ -14,7 +14,7 @@ export function LineageGraph({ run, onSelectRun }: LineageGraphProps) {
     const e: Edge[] = [];
 
     if (run.parentRunId) {
-      // Parent Node
+      // Parent Node (remains stable)
       n.push({
         id: run.parentRunId,
         position: { x: 40, y: 65 },
@@ -40,11 +40,11 @@ export function LineageGraph({ run, onSelectRun }: LineageGraphProps) {
         type: "default",
       });
 
-      // Current Node (Shadow Fork)
+      // Current Child Node (Shadow Fork - draws out)
       n.push({
         id: run.id,
         position: { x: 380, y: 65 },
-        className: "!bg-transparent !border-0 !p-0 !shadow-none",
+        className: "!bg-transparent !border-0 !p-0 !shadow-none animate-fadeIn",
         data: {
           label: (
             <div className="p-2.5 bg-[var(--bg-panel)] border-2 border-[var(--ink-primary)] text-left w-56 font-mono text-[var(--ink-primary)]">
@@ -75,7 +75,7 @@ export function LineageGraph({ run, onSelectRun }: LineageGraphProps) {
         type: "default",
       });
 
-      // Lineage edge
+      // Lineage edge with animated SVG edge stroke-dashoffset
       e.push({
         id: `e-${run.parentRunId}-${run.id}`,
         source: run.parentRunId,
@@ -93,6 +93,7 @@ export function LineageGraph({ run, onSelectRun }: LineageGraphProps) {
           strokeWidth: 1,
         },
         labelBgPadding: [6, 4],
+        className: "animate-edge-draw",
         style: { stroke: "var(--status-shadow-fg)", strokeWidth: 1.5 },
         animated: true,
       });

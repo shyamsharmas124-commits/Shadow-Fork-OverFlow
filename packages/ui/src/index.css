@@ -35,6 +35,14 @@
 :root {
   --font-mono: "JetBrains Mono", monospace;
 
+  /* Motion Tokens */
+  --motion-micro: 120ms;
+  --motion-transition: 180ms;
+  --motion-panel: 250ms;
+  --motion-morph: 600ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
   /* LIGHT THEME: Paper = Linen (#F8F5EE), Ink = Liquorice (#181514) */
   --bg-page: #f8f5ee;
   --bg-panel: #ffffff;
@@ -105,6 +113,63 @@
   --status-shadow-fg: #cbd5e1;
   --status-shadow-bg: #1e293b;
   --status-shadow-border: #475569;
+}
+
+@keyframes tint-flash {
+  0% {
+    background-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-tint-flash {
+  animation: tint-flash var(--motion-morph) var(--ease-out) forwards;
+}
+
+@keyframes lineage-edge-draw {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-edge-draw {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: lineage-edge-draw var(--motion-morph) var(--ease-out) forwards;
+}
+
+/* Native View Transitions */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-transition);
+  animation-timing-function: var(--ease-standard);
+}
+
+.view-transition-run-id {
+  view-transition-name: run-id-heading;
+}
+
+/* Accessibility: Reduced Motion Override */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.001ms;
+    scroll-behavior: auto;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
 }
 
 @layer base {

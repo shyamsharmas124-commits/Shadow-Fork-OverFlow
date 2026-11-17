@@ -13,6 +13,7 @@ import { useState } from "react";
 import { getEffects, getRun, submitApprovalApi } from "../api.js";
 import type { RunEvent } from "../types.js";
 import { formatDate } from "../utils/date.js";
+import { startViewTransition } from "../utils/motion.js";
 import { Badge, ModeBadge, StatusBadge } from "./Badge.js";
 import { DiffView } from "./DiffView.js";
 import { EventDetailPanel } from "./EventDetailPanel.js";
@@ -242,7 +243,9 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
       <div className="flex flex-col gap-2.5 p-3.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <h1 className="text-sm font-mono font-bold text-[var(--ink-primary)]">{run.id}</h1>
+            <h1 className="text-sm font-mono font-bold text-[var(--ink-primary)] view-transition-run-id">
+              {run.id}
+            </h1>
             <StatusBadge status={run.status} />
             <ModeBadge mode={run.mode} />
           </div>
@@ -292,7 +295,11 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
         <button
           type="button"
           data-testid="tab-timeline"
-          onClick={() => setActiveTab("timeline")}
+          onClick={() =>
+            startViewTransition(() => {
+              setActiveTab("timeline");
+            })
+          }
           className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors ${
             activeTab === "timeline"
               ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"
@@ -305,7 +312,11 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           <button
             type="button"
             data-testid="tab-diff"
-            onClick={() => setActiveTab("diff")}
+            onClick={() =>
+              startViewTransition(() => {
+                setActiveTab("diff");
+              })
+            }
             className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
               activeTab === "diff"
                 ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"

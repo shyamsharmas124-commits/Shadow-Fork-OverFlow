@@ -2,6 +2,7 @@ import { Activity, Database, GitBranch, HelpCircle, Moon, Server, Sun, X } from 
 import { useEffect, useState } from "react";
 import { RunDetail } from "./components/RunDetail.js";
 import { RunList } from "./components/RunList.js";
+import { startViewTransition } from "./utils/motion.js";
 import { applyTheme, getInitialTheme, type Theme } from "./utils/theme.js";
 
 export function App() {
@@ -24,7 +25,15 @@ export function App() {
   useEffect(() => {
     const onHashChange = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      setSelectedRunId(hash || null);
+      setSelectedRunId((prev) => {
+        const next = hash || null;
+        if (prev !== next) {
+          startViewTransition(() => {
+            setSelectedRunId(next);
+          });
+        }
+        return prev;
+      });
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -59,12 +68,20 @@ export function App() {
 
   const handleSelectRun = (id: string) => {
     window.location.hash = id;
-    setSelectedRunId(id);
+    if (selectedRunId !== id) {
+      startViewTransition(() => {
+        setSelectedRunId(id);
+      });
+    }
   };
 
   const handleBack = () => {
     window.location.hash = "";
-    setSelectedRunId(null);
+    if (selectedRunId !== null) {
+      startViewTransition(() => {
+        setSelectedRunId(null);
+      });
+    }
   };
 
   return (

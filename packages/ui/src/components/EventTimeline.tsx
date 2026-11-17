@@ -1,5 +1,8 @@
+import { animate, stagger } from "animejs";
+import { useEffect, useRef } from "react";
 import type { EffectDiffItem, RunEvent } from "../types.js";
 import { formatDate } from "../utils/date.js";
+import { isReducedMotion } from "../utils/motion.js";
 import { Badge } from "./Badge.js";
 
 interface EventTimelineProps {
@@ -15,8 +18,28 @@ export function EventTimeline({
   onSelectEvent,
   diffSteps = [],
 }: EventTimelineProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (events.length === 0 || isReducedMotion() || !containerRef.current) return;
+    const items = containerRef.current.querySelectorAll('[data-testid^="event-item-"]');
+    if (items.length > 0) {
+      // Subtle stagger animation using anime.js v4
+      animate(items, {
+        opacity: [0, 1],
+        translateY: [4, 0],
+        delay: stagger(15, { start: 0 }),
+        duration: 180,
+        ease: "outQuad",
+      });
+    }
+  }, [events.length]);
+
   return (
-    <div className="flex flex-col gap-1.5 max-h-[500px] overflow-y-auto pr-1 font-mono text-xs">
+    <div
+      ref={containerRef}
+      className="flex flex-col gap-1.5 max-h-[500px] overflow-y-auto pr-1 font-mono text-xs"
+    >
       {events.map((event) => {
         const isSelected = selectedSeq === event.seq;
         const p = (event.payload ?? {}) as Record<string, unknown>;

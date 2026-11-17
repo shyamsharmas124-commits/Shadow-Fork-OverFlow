@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, statSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { startServer } from "@durable/api";
@@ -131,8 +131,9 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
 
   // Screenshot 1: Run List (full page)
   const screenshot1 = resolve(screenshotsDir, "01-run-list.png");
-  await page.screenshot({ path: screenshot1, fullPage: true });
-  await page.screenshot({ path: resolve(screenshotsDir, "01-run-list-light.png"), fullPage: true });
+  const screenshot1Light = resolve(screenshotsDir, "01-run-list-light.png");
+  await page.screenshot({ path: screenshot1Light, fullPage: true });
+  copyFileSync(screenshot1Light, screenshot1);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -165,8 +166,9 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
 
   // Screenshot 2: Run Detail View (full page)
   const screenshot2 = resolve(screenshotsDir, "02-run-detail.png");
-  await page.screenshot({ path: screenshot2, fullPage: true });
-  await page.screenshot({ path: resolve(screenshotsDir, "02-run-detail-light.png"), fullPage: true });
+  const screenshot2Light = resolve(screenshotsDir, "02-run-detail-light.png");
+  await page.screenshot({ path: screenshot2Light, fullPage: true });
+  copyFileSync(screenshot2Light, screenshot2);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -182,8 +184,9 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   const lineageContainer = page.locator('[data-testid="lineage-graph-container"]');
   await expect(lineageContainer).toBeVisible();
   const screenshot3 = resolve(screenshotsDir, "03-lineage-graph.png");
-  await lineageContainer.screenshot({ path: screenshot3 });
-  await lineageContainer.screenshot({ path: resolve(screenshotsDir, "03-lineage-graph-light.png") });
+  const screenshot3Light = resolve(screenshotsDir, "03-lineage-graph-light.png");
+  await lineageContainer.screenshot({ path: screenshot3Light });
+  copyFileSync(screenshot3Light, screenshot3);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -210,8 +213,9 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
 
   // Screenshot 4: EffectCaptured Event Detail (element screenshot of panel only)
   const screenshot4 = resolve(screenshotsDir, "04-effect-captured-detail.png");
-  await payloadPanel.screenshot({ path: screenshot4 });
-  await payloadPanel.screenshot({ path: resolve(screenshotsDir, "04-effect-captured-detail-light.png") });
+  const screenshot4Light = resolve(screenshotsDir, "04-effect-captured-detail-light.png");
+  await payloadPanel.screenshot({ path: screenshot4Light });
+  copyFileSync(screenshot4Light, screenshot4);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -322,6 +326,7 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   // 8. Click to navigate directly to the new Shadow Fork run
   await navigateToForkBtn.click();
   await page.waitForSelector('[data-testid="run-detail-view"]');
+  await expect(page.locator("h1")).not.toContainText(parentRunId);
 
   // Verify on the fork run page
   const forkH1 = await page.locator("h1").innerText();
@@ -349,8 +354,9 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
 
   // Screenshot 5: Fork & Execution Diff View
   const screenshot5 = resolve(screenshotsDir, "05-fork-and-diff-view.png");
-  await page.screenshot({ path: screenshot5, fullPage: true });
-  await page.screenshot({ path: resolve(screenshotsDir, "05-fork-and-diff-view-light.png"), fullPage: true });
+  const screenshot5Light = resolve(screenshotsDir, "05-fork-and-diff-view-light.png");
+  await page.screenshot({ path: screenshot5Light, fullPage: true });
+  copyFileSync(screenshot5Light, screenshot5);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -446,8 +452,9 @@ test("03. Diff View displays 'Failed in Parent' badge with parent error for fail
 
   // Screenshot 6: Failed in Parent Diff View
   const screenshot6 = resolve(screenshotsDir, "06-failed-in-parent-diff.png");
-  await page.screenshot({ path: screenshot6, fullPage: true });
-  await page.screenshot({ path: resolve(screenshotsDir, "06-failed-in-parent-diff-light.png"), fullPage: true });
+  const screenshot6Light = resolve(screenshotsDir, "06-failed-in-parent-diff-light.png");
+  await page.screenshot({ path: screenshot6Light, fullPage: true });
+  copyFileSync(screenshot6Light, screenshot6);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -575,8 +582,9 @@ test("05. Approval Gate UI: displays pending approval card, user approves, and w
 
   // Screenshot 7: Pending Approval Gate
   const screenshot7 = resolve(screenshotsDir, "07-approval-gate.png");
-  await page.screenshot({ path: screenshot7, fullPage: true });
-  await page.screenshot({ path: resolve(screenshotsDir, "07-approval-gate-light.png"), fullPage: true });
+  const screenshot7Light = resolve(screenshotsDir, "07-approval-gate-light.png");
+  await page.screenshot({ path: screenshot7Light, fullPage: true });
+  copyFileSync(screenshot7Light, screenshot7);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
