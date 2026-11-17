@@ -16,7 +16,7 @@
         "sampleTarget": [
           "button[data-testid=\"event-item-1\"] > .gap-2.items-center.flex > .w-7.tabular-nums.text-xs"
         ],
-        "sampleFailure": "Fix any of the following:\n  Element has insufficient color contrast of 3.18 (foreground color: #918d88, background color: #fcfbf8, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+        "sampleFailure": "Fix any of the following:\n  Element has insufficient color contrast of 3.54 (foreground color: #898580, background color: #fcfbf9, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
       }
     ]
   },
