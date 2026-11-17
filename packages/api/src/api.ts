@@ -735,6 +735,124 @@ export function createApiApp(options: CreateApiOptions): Hono {
   });
 
   /**
+   * GET /workers
+   * Worker and lease view: returns active workers, lease holders, task assignments, and lease expiration.
+   * Token rules unchanged, read-time redaction applied.
+   */
+  app.get("/workers", async (c) => {
+    // 1. Query distinct workers from tasks
+    const { rows: workerRows } = await pool.query<{
+      lease_owner: string;
+      active_tasks_count: string;
+      total_tasks_count: string;
+      last_heartbeat_at: Date | null;
+      lease_expires_at: Date | null;
+    }>(
+      `SELECT 
+         lease_owner,
+         COUNT(*) FILTER (WHERE status = 'running' AND lease_expires_at > now()) as active_tasks_count,
+         COUNT(*) as total_tasks_count,
+         MAX(last_heartbeat_at) as last_heartbeat_at,
+         MAX(lease_expires_at) as lease_expires_at
+       FROM tasks
+       WHERE lease_owner IS NOT NULL
+       GROUP BY lease_owner
+       ORDER BY last_heartbeat_at DESC NULLS LAST`,
+    );
+
+    // 2. Query active or recent leases
+    const { rows: leaseRows } = await pool.query<{
+      id: string;
+      run_id: string;
+      step_key: string;
+      attempt: number;
+      status: string;
+      lease_owner: string | null;
+      lease_expires_at: Date | null;
+      last_heartbeat_at: Date | null;
+      run_at: Date;
+      workflow_type: string;
+    }>(
+      `SELECT 
+         t.id,
+         t.run_id,
+         t.step_key,
+         t.attempt,
+         t.status,
+         t.lease_owner,
+         t.lease_expires_at,
+         t.last_heartbeat_at,
+         t.run_at,
+         r.workflow_type
+       FROM tasks t
+       JOIN runs r ON t.run_id = r.id
+       WHERE t.status = 'running' OR (t.lease_owner IS NOT NULL AND t.lease_expires_at > now() - interval '10 minutes')
+       ORDER BY t.lease_expires_at ASC NULLS LAST
+       LIMIT 100`,
+    );
+
+    const now = new Date().getTime();
+
+    const workers = workerRows.map((w) => {
+      const activeCount = Number.parseInt(w.active_tasks_count || "0", 10);
+      const totalCount = Number.parseInt(w.total_tasks_count || "0", 10);
+      const expiresAt = w.lease_expires_at ? new Date(w.lease_expires_at).getTime() : 0;
+      const isLeaseValid = expiresAt > now;
+
+      const workerTasks = leaseRows
+        .filter((l) => l.lease_owner === w.lease_owner)
+        .map((t) => ({
+          id: t.id,
+          runId: t.run_id,
+          stepKey: t.step_key,
+          attempt: t.attempt,
+          status: t.status,
+          leaseExpiresAt: t.lease_expires_at,
+          lastHeartbeatAt: t.last_heartbeat_at,
+          workflowType: t.workflow_type,
+        }));
+
+      let status: "active" | "idle" | "stale" = "idle";
+      if (activeCount > 0 && isLeaseValid) {
+        status = "active";
+      } else if (expiresAt > 0 && expiresAt <= now) {
+        status = "stale";
+      }
+
+      return {
+        workerId: w.lease_owner,
+        status,
+        activeTasksCount: activeCount,
+        totalTasksCount: totalCount,
+        lastHeartbeatAt: w.last_heartbeat_at,
+        leaseExpiresAt: w.lease_expires_at,
+        currentTasks: workerTasks,
+      };
+    });
+
+    const activeLeases = leaseRows.map((t) => ({
+      id: t.id,
+      runId: t.run_id,
+      stepKey: t.step_key,
+      attempt: t.attempt,
+      status: t.status,
+      leaseOwner: t.lease_owner,
+      leaseExpiresAt: t.lease_expires_at,
+      lastHeartbeatAt: t.last_heartbeat_at,
+      workflowType: t.workflow_type,
+    }));
+
+    return c.json(
+      redactApiOutput({
+        workers,
+        activeLeases,
+        totalWorkers: workers.length,
+        totalActiveLeases: activeLeases.filter((l) => l.status === "running").length,
+      }),
+    );
+  });
+
+  /**
    * 3. GET /runs/:id/effects
    * Diff view: original vs shadow effects, side-by-side with reusedFromParent and inputChangedFromParent.
    */

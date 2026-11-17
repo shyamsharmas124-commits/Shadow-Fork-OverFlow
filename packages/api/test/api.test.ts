@@ -1286,4 +1286,54 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
     });
   });
+
+  describe("GET /workers: Worker Pool and Lease Monitoring", () => {
+    it("returns active workers, active leases, task counts, and applies read-time redaction", async () => {
+      const engine = new Engine(pool, {
+        test_worker_wf: async () => {},
+      });
+      const app = createApiApp({ engine, pool });
+
+      // Seed a test run and tasks with worker lease
+      const runId = await engine.startRun("test_worker_wf", {});
+      const testWorkerId = `worker-test-${randomUUID().slice(0, 8)}`;
+      const secretStep = "step-with-secret-tok_secret_value_12345";
+
+      await pool.query(
+        `INSERT INTO tasks (run_id, step_key, attempt, status, run_at, lease_owner, lease_expires_at, last_heartbeat_at)
+         VALUES ($1, $2, 1, 'running', now(), $3, now() + interval '5 minutes', now())`,
+        [runId, secretStep, testWorkerId],
+      );
+
+      const res = await app.request("/workers");
+      expect(res.status).toBe(200);
+
+      const text = await res.text();
+      expect(text).not.toContain("tok_secret_value_12345");
+
+      const body = JSON.parse(text) as {
+        workers: Array<{
+          workerId: string;
+          status: string;
+          activeTasksCount: number;
+          currentTasks: Array<{ stepKey: string }>;
+        }>;
+        activeLeases: Array<{ leaseOwner: string; stepKey: string }>;
+        totalWorkers: number;
+        totalActiveLeases: number;
+      };
+
+      expect(Array.isArray(body.workers)).toBe(true);
+      expect(Array.isArray(body.activeLeases)).toBe(true);
+      expect(body.totalWorkers).toBeGreaterThanOrEqual(1);
+
+      const foundWorker = body.workers.find((w) => w.workerId === testWorkerId);
+      expect(foundWorker).toBeDefined();
+      expect(foundWorker?.status).toBe("active");
+      expect(foundWorker?.activeTasksCount).toBeGreaterThanOrEqual(1);
+
+      // Clean up tasks
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+    });
+  });
 });
