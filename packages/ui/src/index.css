@@ -44,6 +44,7 @@
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
 
   /* LIGHT THEME: Paper = Linen (#F8F5EE), Ink = Liquorice (#181514) */
+  --paper: #f8f5ee;
   --bg-page: #f8f5ee;
   --bg-panel: #ffffff;
   --bg-subtle: #f0ece2;
@@ -81,6 +82,7 @@
 :root.dark,
 [data-theme="dark"] {
   /* DARK THEME: Panels = Anthracite (#1E2024 / #26292E), Ink = Linen (#F8F5EE) */
+  --paper: #181514;
   --bg-page: #1e2024;
   --bg-panel: #26292e;
   --bg-subtle: #2e3238;

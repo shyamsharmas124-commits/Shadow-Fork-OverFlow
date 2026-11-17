@@ -144,7 +144,7 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
           <div className="flex items-center justify-between pb-1 border-b border-[var(--border-hairline)] font-bold text-[var(--ink-secondary)]">
             <span>Parent Run (Live)</span>
             {item.parent?.seq !== undefined && (
-              <span className="text-[10px] text-[var(--ink-muted)]">Seq {item.parent.seq}</span>
+              <span className="text-[10px] text-[var(--ink-secondary)]">Seq {item.parent.seq}</span>
             )}
           </div>
           {item.parent ? (
@@ -215,7 +215,7 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
           <div className="flex items-center justify-between pb-1 border-b border-[var(--border-hairline)] font-bold text-[var(--ink-primary)]">
             <span>Shadow Fork</span>
             {item.shadow?.seq !== undefined && (
-              <span className="text-[10px] text-[var(--ink-muted)]">Seq {item.shadow.seq}</span>
+              <span className="text-[10px] text-[var(--ink-secondary)]">Seq {item.shadow.seq}</span>
             )}
           </div>
           {item.shadow ? (
