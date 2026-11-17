@@ -47,17 +47,59 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
   const getStatusBadge = (status: EffectDiffItem["status"]) => {
     switch (status) {
       case "reused":
-        return <Badge variant="cyan">Reused from Parent</Badge>;
+        return (
+          <Badge variant="cyan">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [=]
+            </span>
+            Reused from Parent
+          </Badge>
+        );
       case "modified":
-        return <Badge variant="shadow">Modified / Edited</Badge>;
+        return (
+          <Badge variant="shadow">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [~]
+            </span>
+            Modified / Edited
+          </Badge>
+        );
       case "added":
-        return <Badge variant="success">Added in Fork</Badge>;
+        return (
+          <Badge variant="success">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [+]
+            </span>
+            Added in Fork
+          </Badge>
+        );
       case "failed-in-parent":
-        return <Badge variant="danger">Failed in Parent</Badge>;
+        return (
+          <Badge variant="danger">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [!]
+            </span>
+            Failed in Parent
+          </Badge>
+        );
       case "only-in-parent":
-        return <Badge variant="default">Only in Parent</Badge>;
+        return (
+          <Badge variant="default">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [-]
+            </span>
+            Only in Parent
+          </Badge>
+        );
       case "live":
-        return <Badge variant="default">Live</Badge>;
+        return (
+          <Badge variant="default">
+            <span aria-hidden="true" className="mr-1 font-mono">
+              [=]
+            </span>
+            Live
+          </Badge>
+        );
     }
   };
 
