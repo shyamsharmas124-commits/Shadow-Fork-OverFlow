@@ -1,0 +1,50 @@
+{
+  "Run List View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Run List View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Run Detail View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Run Detail View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Event Detail Panel (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Event Detail Panel (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Fork Modal (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Fork Modal (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Diff View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Diff View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Approval Gate View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Approval Gate View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  }
+}

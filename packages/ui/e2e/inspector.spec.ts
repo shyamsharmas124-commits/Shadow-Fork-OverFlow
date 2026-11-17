@@ -132,6 +132,17 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   // Screenshot 1: Run List (full page)
   const screenshot1 = resolve(screenshotsDir, "01-run-list.png");
   await page.screenshot({ path: screenshot1, fullPage: true });
+  await page.screenshot({ path: resolve(screenshotsDir, "01-run-list-light.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: resolve(screenshotsDir, "01-run-list-dark.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
 
   // 2. Click to navigate to Run Detail for the Shadow Fork
   await shadowRow.click();
@@ -155,12 +166,34 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   // Screenshot 2: Run Detail View (full page)
   const screenshot2 = resolve(screenshotsDir, "02-run-detail.png");
   await page.screenshot({ path: screenshot2, fullPage: true });
+  await page.screenshot({ path: resolve(screenshotsDir, "02-run-detail-light.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: resolve(screenshotsDir, "02-run-detail-dark.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
 
   // 3. Lineage Graph Screenshot (element screenshot of graph only)
   const lineageContainer = page.locator('[data-testid="lineage-graph-container"]');
   await expect(lineageContainer).toBeVisible();
   const screenshot3 = resolve(screenshotsDir, "03-lineage-graph.png");
   await lineageContainer.screenshot({ path: screenshot3 });
+  await lineageContainer.screenshot({ path: resolve(screenshotsDir, "03-lineage-graph-light.png") });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await lineageContainer.screenshot({ path: resolve(screenshotsDir, "03-lineage-graph-dark.png") });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
 
   // 4. Select EffectCaptured Event in Timeline
   const effectEventItem = page.locator('button[data-testid^="event-item-"]', {
@@ -178,6 +211,17 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   // Screenshot 4: EffectCaptured Event Detail (element screenshot of panel only)
   const screenshot4 = resolve(screenshotsDir, "04-effect-captured-detail.png");
   await payloadPanel.screenshot({ path: screenshot4 });
+  await payloadPanel.screenshot({ path: resolve(screenshotsDir, "04-effect-captured-detail-light.png") });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await payloadPanel.screenshot({ path: resolve(screenshotsDir, "04-effect-captured-detail-dark.png") });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
 
   // 5. Assert all 4 screenshot files exist and have distinct byte sizes
   const s1Size = statSync(screenshot1).size;
@@ -306,6 +350,17 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   // Screenshot 5: Fork & Execution Diff View
   const screenshot5 = resolve(screenshotsDir, "05-fork-and-diff-view.png");
   await page.screenshot({ path: screenshot5, fullPage: true });
+  await page.screenshot({ path: resolve(screenshotsDir, "05-fork-and-diff-view-light.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: resolve(screenshotsDir, "05-fork-and-diff-view-dark.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
   expect(statSync(screenshot5).size).toBeGreaterThan(0);
 
   // 10. Security & Secret Redaction: Assert planted secrets are NOT in the DOM
@@ -392,6 +447,17 @@ test("03. Diff View displays 'Failed in Parent' badge with parent error for fail
   // Screenshot 6: Failed in Parent Diff View
   const screenshot6 = resolve(screenshotsDir, "06-failed-in-parent-diff.png");
   await page.screenshot({ path: screenshot6, fullPage: true });
+  await page.screenshot({ path: resolve(screenshotsDir, "06-failed-in-parent-diff-light.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: resolve(screenshotsDir, "06-failed-in-parent-diff-dark.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
   expect(statSync(screenshot6).size).toBeGreaterThan(0);
 });
 
@@ -510,6 +576,17 @@ test("05. Approval Gate UI: displays pending approval card, user approves, and w
   // Screenshot 7: Pending Approval Gate
   const screenshot7 = resolve(screenshotsDir, "07-approval-gate.png");
   await page.screenshot({ path: screenshot7, fullPage: true });
+  await page.screenshot({ path: resolve(screenshotsDir, "07-approval-gate-light.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-theme", "dark");
+  });
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: resolve(screenshotsDir, "07-approval-gate-dark.png"), fullPage: true });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.setAttribute("data-theme", "light");
+  });
   expect(statSync(screenshot7).size).toBeGreaterThan(0);
 
   // 4. Click Approve button

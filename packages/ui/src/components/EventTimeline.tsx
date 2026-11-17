@@ -16,13 +16,12 @@ export function EventTimeline({
   diffSteps = [],
 }: EventTimelineProps) {
   return (
-    <div className="flex flex-col gap-2 max-h-[500px] overflow-y-auto pr-1">
+    <div className="flex flex-col gap-1.5 max-h-[500px] overflow-y-auto pr-1 font-mono text-xs">
       {events.map((event) => {
         const isSelected = selectedSeq === event.seq;
         const p = (event.payload ?? {}) as Record<string, unknown>;
         const stepName = (p.name as string | undefined) || (p.stepName as string | undefined);
 
-        // Find matching diff step if applicable
         const matchingDiff = stepName ? diffSteps.find((s) => s.stepName === stepName) : undefined;
 
         const isReused = matchingDiff?.reusedFromParent ?? Boolean(p.reusedFromParent);
@@ -34,7 +33,7 @@ export function EventTimeline({
           if (type === "RunCompleted" || type === "ApprovalGranted") return "success";
           if (type === "RunFailed" || type === "StepFailed" || type === "ApprovalRejected")
             return "danger";
-          if (type === "EffectCaptured") return "purple";
+          if (type === "EffectCaptured") return "shadow";
           if (type === "StepCompleted") return "cyan";
           if (type === "RunResumed" || type === "ApprovalRequested") return "warning";
           return "default";
@@ -46,29 +45,33 @@ export function EventTimeline({
             key={event.seq}
             data-testid={`event-item-${event.seq}`}
             onClick={() => onSelectEvent(event)}
-            className={`w-full p-3 rounded-lg border text-left cursor-pointer transition-colors flex items-center justify-between ${
+            className={`w-full p-2 border text-left cursor-pointer transition-colors flex items-center justify-between ${
               isSelected
-                ? "bg-purple-950/40 border-purple-500 shadow"
-                : "bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900"
+                ? "bg-[var(--bg-subtle)] border-[var(--ink-primary)] font-bold"
+                : "bg-[var(--bg-panel)] border-[var(--border-hairline)] hover:bg-[var(--bg-hover)]"
             }`}
           >
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-xs text-slate-400 w-8">#{event.seq}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--ink-secondary)] w-7 tabular-nums">
+                #{event.seq}
+              </span>
               <div className="flex flex-col">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <Badge variant={getBadgeVariant(event.type)}>{event.type}</Badge>
                   {stepName && (
-                    <span className="font-mono text-xs text-slate-300 font-medium">{stepName}</span>
+                    <span className="text-xs text-[var(--ink-primary)] font-medium">
+                      {stepName}
+                    </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-1.5 mt-0.5">
                   {isReused && <Badge variant="cyan">reusedFromParent</Badge>}
                   {isInputChanged && <Badge variant="warning">inputChangedFromParent</Badge>}
-                  {isMock && <Badge variant="purple">mock</Badge>}
+                  {isMock && <Badge variant="shadow">mock</Badge>}
                 </div>
               </div>
             </div>
-            <span className="text-xs text-slate-500 font-mono">
+            <span className="text-[11px] text-[var(--ink-secondary)] tabular-nums">
               {formatDate(event.createdAt, { timeOnly: true })}
             </span>
           </button>

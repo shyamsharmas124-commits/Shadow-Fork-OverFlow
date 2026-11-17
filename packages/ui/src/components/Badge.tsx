@@ -5,20 +5,29 @@ export function Badge({
   variant = "default",
 }: {
   children: ReactNode;
-  variant?: "default" | "success" | "warning" | "danger" | "purple" | "cyan";
+  variant?: "default" | "success" | "warning" | "danger" | "shadow" | "purple" | "cyan";
 }) {
-  const styles = {
-    default: "bg-slate-800 text-slate-300 border-slate-700",
-    success: "bg-emerald-950/80 text-emerald-400 border-emerald-800",
-    warning: "bg-amber-950/80 text-amber-400 border-amber-800",
-    danger: "bg-rose-950/80 text-rose-400 border-rose-800",
-    purple: "bg-purple-950/80 text-purple-300 border-purple-800",
-    cyan: "bg-cyan-950/80 text-cyan-300 border-cyan-800",
-  }[variant];
+  // Map styles to instrument panel square tags with hairline borders
+  const styleMap: Record<string, string> = {
+    default: "bg-[var(--bg-subtle)] text-[var(--ink-secondary)] border-[var(--border-hairline)]",
+    success:
+      "bg-[var(--status-completed-bg)] text-[var(--status-completed-fg)] border-[var(--status-completed-border)]",
+    warning:
+      "bg-[var(--status-running-bg)] text-[var(--status-running-fg)] border-[var(--status-running-border)]",
+    danger:
+      "bg-[var(--status-failed-bg)] text-[var(--status-failed-fg)] border-[var(--status-failed-border)]",
+    shadow:
+      "bg-[var(--status-shadow-bg)] text-[var(--status-shadow-fg)] border-[var(--status-shadow-border)]",
+    purple:
+      "bg-[var(--status-shadow-bg)] text-[var(--status-shadow-fg)] border-[var(--status-shadow-border)]",
+    cyan: "bg-[var(--bg-subtle)] text-[var(--ink-primary)] border-[var(--border-hairline)]",
+  };
+
+  const selectedClass = styleMap[variant] ?? styleMap.default;
 
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${styles}`}
+      className={`inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono font-medium border rounded-none tracking-tight ${selectedClass}`}
     >
       {children}
     </span>
@@ -37,7 +46,7 @@ export function StatusBadge({ status }: { status: string }) {
 
 export function ModeBadge({ mode }: { mode: string }) {
   if (mode === "shadow") {
-    return <Badge variant="purple">Shadow Fork</Badge>;
+    return <Badge variant="shadow">Shadow Fork</Badge>;
   }
   return <Badge variant="default">Live</Badge>;
 }

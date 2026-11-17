@@ -12,7 +12,7 @@ interface EventDetailPanelProps {
 export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetailPanelProps) {
   if (!event) {
     return (
-      <div className="h-full flex items-center justify-center p-8 text-center text-slate-500 text-sm border border-slate-800 rounded-lg bg-slate-900/40">
+      <div className="h-full flex items-center justify-center p-6 text-center text-[var(--ink-muted)] text-xs border border-[var(--border-hairline)] bg-[var(--bg-panel)] font-mono">
         Select an event from the timeline to inspect its payload and shadow execution diff.
       </div>
     );
@@ -31,31 +31,31 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
   return (
     <div
       data-testid="event-detail-panel"
-      className="p-5 border border-slate-800 rounded-lg bg-slate-900/60 flex flex-col gap-4"
+      className="p-3.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)] flex flex-col gap-3 font-mono text-xs text-[var(--ink-primary)]"
     >
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+      <div className="flex items-center justify-between pb-2.5 border-b border-[var(--border-hairline)]">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+          <span className="font-mono text-xs px-1.5 py-0.5 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-[var(--ink-primary)] font-bold">
             Seq {event.seq}
           </span>
-          <span className="font-semibold text-slate-200">{event.type}</span>
+          <span className="font-bold text-[var(--ink-primary)]">{event.type}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {event.type === "StepCompleted" && onForkFromStep && (
             <button
               type="button"
               data-testid="fork-from-step-btn"
               onClick={() => onForkFromStep(event)}
-              className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-white bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 px-2.5 py-1 rounded cursor-pointer transition-colors"
+              className="flex items-center gap-1 text-[11px] text-[var(--ink-primary)] hover:text-white bg-[var(--bg-subtle)] hover:bg-[var(--accent)] border border-[var(--border-hairline)] px-2 py-0.5 cursor-pointer transition-colors"
             >
-              <GitFork className="w-3.5 h-3.5" />
+              <GitFork className="w-3 h-3" />
               Fork from this step
             </button>
           )}
           {isReused && <Badge variant="cyan">reusedFromParent</Badge>}
           {isInputChanged && <Badge variant="warning">inputChangedFromParent</Badge>}
-          {isMock && <Badge variant="purple">mock</Badge>}
-          <span className="text-xs text-slate-400">
+          {isMock && <Badge variant="shadow">mock</Badge>}
+          <span className="text-[11px] text-[var(--ink-secondary)] tabular-nums">
             {formatDate(event.createdAt, { timeOnly: true })}
           </span>
         </div>
@@ -65,11 +65,11 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
       {isInputChanged && isReused && (
         <div
           data-testid="reused-input-warning"
-          className="p-3 bg-amber-950/50 border border-amber-500/60 rounded text-amber-200 text-xs flex items-start gap-2.5"
+          className="p-2 bg-[var(--status-running-bg)] border border-[var(--status-running-border)] text-[var(--status-running-fg)] flex items-start gap-2"
         >
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold">Provenance Warning:</span>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-0.5 text-[11px]">
+            <span className="font-bold">Provenance Warning:</span>
             <span>This result is from the original run and was produced from different input.</span>
           </div>
         </div>
@@ -79,38 +79,40 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
       {isEffectCaptured && isMock && (
         <div
           data-testid="mock-substitution-notice"
-          className="p-3 bg-purple-950/50 border border-purple-500/60 rounded text-purple-200 text-xs flex items-start gap-2.5"
+          className="p-2.5 bg-[var(--status-shadow-bg)] border border-[var(--status-shadow-border)] text-[var(--status-shadow-fg)] flex items-start gap-2"
         >
-          <Sparkles className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold">Mock Substitution:</span>
+          <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-[var(--ink-primary)]" />
+          <div className="flex flex-col gap-0.5 text-[11px]">
+            <span className="font-bold">Mock Substitution (Safe Isolation):</span>
             <span>
               This effect used an injected mock rather than calling the real external connector. The
-              step succeeded using simulated responses.
+              step succeeded using simulated responses without external mutations.
             </span>
           </div>
         </div>
       )}
 
       {stepDiff && (
-        <div className="p-3 bg-slate-950/80 rounded border border-slate-800 text-xs flex flex-col gap-2">
-          <div className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
-            Step Diff Info
+        <div className="p-2.5 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-xs flex flex-col gap-1.5">
+          <div className="text-[var(--ink-secondary)] font-bold uppercase tracking-wider text-[10px]">
+            Step Diff Metadata
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
             <div>
-              <span className="text-slate-500">Step: </span>
-              <span className="font-mono text-slate-200">{stepDiff.stepName}</span> (occ{" "}
+              <span className="text-[var(--ink-muted)]">Step: </span>
+              <span className="font-bold text-[var(--ink-primary)]">{stepDiff.stepName}</span> (occ{" "}
               {stepDiff.occurrence})
             </div>
             <div>
-              <span className="text-slate-500">Diff Status: </span>
-              <span className="font-semibold capitalize text-purple-400">{stepDiff.status}</span>
+              <span className="text-[var(--ink-muted)]">Diff Status: </span>
+              <span className="font-bold text-[var(--ink-primary)] capitalize">
+                {stepDiff.status}
+              </span>
             </div>
             {resultSource && (
               <div className="col-span-2">
-                <span className="text-slate-500">Result Source: </span>
-                <span className="font-mono text-purple-300 font-medium capitalize">
+                <span className="text-[var(--ink-muted)]">Result Source: </span>
+                <span className="font-bold text-[var(--ink-primary)] capitalize">
                   {resultSource}
                 </span>
               </div>
@@ -120,10 +122,10 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
       )}
 
       <div>
-        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+        <div className="text-[10px] font-bold text-[var(--ink-secondary)] uppercase tracking-wider mb-1">
           Payload JSON
         </div>
-        <pre className="p-4 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-200 overflow-x-auto max-h-96">
+        <pre className="p-2.5 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-xs font-mono text-[var(--ink-primary)] overflow-x-auto max-h-96 whitespace-pre-wrap break-all">
           <code data-testid="event-payload-json">{JSON.stringify(event.payload, null, 2)}</code>
         </pre>
       </div>

@@ -1,11 +1,144 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* LIGHT THEME: Paper = Linen (#F8F5EE), Ink = Liquorice (#181514) */
+  --bg-page: #f8f5ee;
+  --bg-panel: #ffffff;
+  --bg-subtle: #f0ece2;
+  --bg-hover: #ece7dc;
+  --border-hairline: #d9d3c5;
+  --border-subtle: #e8e3d7;
+
+  --ink-primary: #181514;
+  --ink-secondary: #4a4642;
+  --ink-muted: #6b655e;
+
+  /* Single Accent: Paprika (#B83A1B) */
+  --accent: #b83a1b;
+  --accent-hover: #9e2f14;
+  --accent-fg: #ffffff;
+
+  /* Status Colors */
+  --status-completed-fg: #1e5a36;
+  --status-completed-bg: #e8f5ee;
+  --status-completed-border: #8acfa8;
+
+  --status-failed-fg: #b91c1c;
+  --status-failed-bg: #feeceb;
+  --status-failed-border: #f87171;
+
+  --status-running-fg: #92400e;
+  --status-running-bg: #fef3c7;
+  --status-running-border: #f59e0b;
+
+  --status-shadow-fg: #334155;
+  --status-shadow-bg: #f1f5f9;
+  --status-shadow-border: #94a3b8;
+}
+
+:root.dark,
+[data-theme="dark"] {
+  /* DARK THEME: Panels = Anthracite (#1E2024 / #26292E), Ink = Linen (#F8F5EE) */
+  --bg-page: #1e2024;
+  --bg-panel: #26292e;
+  --bg-subtle: #2e3238;
+  --bg-hover: #363b43;
+  --border-hairline: #3d424b;
+  --border-subtle: #30343c;
+
+  --ink-primary: #f8f5ee;
+  --ink-secondary: #d4cfc6;
+  --ink-muted: #a39d93;
+
+  /* Single Accent: Paprika (#C44527) */
+  --accent: #c44527;
+  --accent-hover: #d74e2d;
+  --accent-fg: #ffffff;
+
+  /* Status Colors */
+  --status-completed-fg: #4ead75;
+  --status-completed-bg: #14281d;
+  --status-completed-border: #235a38;
+
+  --status-failed-fg: #f87171;
+  --status-failed-bg: #321616;
+  --status-failed-border: #7f1d1d;
+
+  --status-running-fg: #fbbf24;
+  --status-running-bg: #2c210b;
+  --status-running-border: #78350f;
+
+  --status-shadow-fg: #cbd5e1;
+  --status-shadow-bg: #1e293b;
+  --status-shadow-border: #475569;
+}
+
 @layer base {
+  * {
+    border-color: var(--border-hairline);
+  }
+
   body {
-    background-color: #020617;
-    color: #f8fafc;
-    font-family:
-      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--ink-primary);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+    padding: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-mono);
+    color: var(--ink-primary);
+    font-weight: 700;
+  }
+
+  code,
+  pre,
+  kbd {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 }

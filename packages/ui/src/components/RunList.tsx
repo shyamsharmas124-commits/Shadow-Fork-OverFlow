@@ -32,11 +32,19 @@ export function RunList({ onSelectRun }: RunListProps) {
   const paginatedRuns = runs.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="flex flex-col gap-6" data-testid="run-list-view">
-      {/* Top Filter and Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-lg border border-slate-800 bg-slate-900/50">
+    <div className="flex flex-col gap-4" data-testid="run-list-view">
+      {/* Title & Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
         <div className="flex items-center gap-3">
-          <label htmlFor="status-select" className="text-xs text-slate-400">
+          <h1 className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--ink-primary)]">
+            Run Registry
+          </h1>
+          <span className="text-[11px] text-[var(--ink-muted)] font-mono">|</span>
+
+          <label
+            htmlFor="status-select"
+            className="text-[11px] font-mono text-[var(--ink-secondary)]"
+          >
             Status:
           </label>
           <select
@@ -46,7 +54,7 @@ export function RunList({ onSelectRun }: RunListProps) {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="text-xs bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200"
+            className="text-xs font-mono bg-[var(--bg-subtle)] border border-[var(--border-hairline)] px-2 py-1 text-[var(--ink-primary)] focus:outline-hidden"
           >
             <option value="">All Statuses</option>
             <option value="running">Running</option>
@@ -54,7 +62,10 @@ export function RunList({ onSelectRun }: RunListProps) {
             <option value="failed">Failed</option>
           </select>
 
-          <label htmlFor="mode-select" className="text-xs text-slate-400">
+          <label
+            htmlFor="mode-select"
+            className="text-[11px] font-mono text-[var(--ink-secondary)]"
+          >
             Mode:
           </label>
           <select
@@ -64,7 +75,7 @@ export function RunList({ onSelectRun }: RunListProps) {
               setModeFilter(e.target.value);
               setPage(1);
             }}
-            className="text-xs bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200"
+            className="text-xs font-mono bg-[var(--bg-subtle)] border border-[var(--border-hairline)] px-2 py-1 text-[var(--ink-primary)] focus:outline-hidden"
           >
             <option value="">All Modes</option>
             <option value="live">Live Only</option>
@@ -75,55 +86,65 @@ export function RunList({ onSelectRun }: RunListProps) {
         <button
           type="button"
           onClick={() => refetch()}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded border border-slate-800 bg-slate-900 cursor-pointer"
+          className="flex items-center gap-1.5 text-xs font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Refresh
         </button>
       </div>
 
-      {/* Table Container */}
-      <div className="rounded-lg border border-slate-800 overflow-hidden bg-slate-900/30">
+      {/* Dense Registry Table */}
+      <div className="border border-[var(--border-hairline)] bg-[var(--bg-panel)] overflow-hidden">
         {isLoading ? (
-          <div className="p-12 text-center text-slate-400">Loading workflows...</div>
+          <div className="p-8 text-center text-xs font-mono text-[var(--ink-muted)]">
+            Loading workflow runs...
+          </div>
         ) : error ? (
-          <div className="p-8 text-center text-rose-400">Failed to load runs: {String(error)}</div>
+          <div className="p-6 text-center text-xs font-mono text-[var(--status-failed-fg)]">
+            Failed to load runs: {String(error)}
+          </div>
         ) : runs.length === 0 ? (
-          <div className="p-12 text-center text-slate-500">No workflow runs found.</div>
+          <div className="p-8 text-center text-xs font-mono text-[var(--ink-muted)]">
+            No workflow runs found in registry.
+          </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left text-slate-300">
-              <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-[var(--bg-subtle)] text-[var(--ink-secondary)] uppercase tracking-wider font-mono text-[11px] border-b border-[var(--border-hairline)]">
                 <tr>
-                  <th className="p-3.5">Run ID</th>
-                  <th className="p-3.5">Workflow</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5">Mode</th>
-                  <th className="p-3.5">Parent Run</th>
-                  <th className="p-3.5">Duration</th>
-                  <th className="p-3.5">Created At</th>
+                  <th className="p-2.5 font-bold">Run ID</th>
+                  <th className="p-2.5 font-bold">Workflow</th>
+                  <th className="p-2.5 font-bold">Status</th>
+                  <th className="p-2.5 font-bold">Mode</th>
+                  <th className="p-2.5 font-bold">Parent Run</th>
+                  <th className="p-2.5 font-bold text-right">Duration</th>
+                  <th className="p-2.5 font-bold">Created At</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono">
+              <tbody className="divide-y divide-[var(--border-hairline)] font-mono">
                 {paginatedRuns.map((r) => (
                   <tr
                     key={r.id}
                     data-testid={`run-row-${r.id}`}
                     onClick={() => onSelectRun(r.id)}
-                    className="hover:bg-slate-800/40 cursor-pointer transition-colors"
+                    className="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
                   >
-                    <td className="p-3.5 font-bold text-slate-100 flex items-center gap-1.5">
-                      {r.mode === "shadow" && <GitFork className="w-3.5 h-3.5 text-purple-400" />}
-                      <span className="hover:text-purple-400">{r.id}</span>
+                    <td className="p-2.5 font-bold text-[var(--ink-primary)] flex items-center gap-1.5">
+                      {r.mode === "shadow" && (
+                        <GitFork className="w-3.5 h-3.5 text-[var(--ink-secondary)]" />
+                      )}
+                      <span className="hover:underline">{r.id}</span>
                     </td>
-                    <td className="p-3.5 font-sans font-medium text-slate-200">{r.workflowType}</td>
-                    <td className="p-3.5 font-sans">
+                    <td className="p-2.5 text-[var(--ink-primary)] font-medium">
+                      {r.workflowType}
+                    </td>
+                    <td className="p-2.5">
                       <StatusBadge status={r.status} />
                     </td>
-                    <td className="p-3.5 font-sans">
+                    <td className="p-2.5">
                       <ModeBadge mode={r.mode} />
                     </td>
-                    <td className="p-3.5">
+                    <td className="p-2.5">
                       {r.parentRunId ? (
                         <button
                           type="button"
@@ -131,19 +152,19 @@ export function RunList({ onSelectRun }: RunListProps) {
                             e.stopPropagation();
                             onSelectRun(r.parentRunId!);
                           }}
-                          className="text-purple-400 hover:underline flex items-center gap-1 cursor-pointer"
+                          className="hover:underline text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center gap-1 cursor-pointer font-mono"
                         >
                           <GitFork className="w-3 h-3" />
                           <span>{r.parentRunId.slice(0, 8)}...</span>
                         </button>
                       ) : (
-                        <span className="text-slate-500 font-sans">-</span>
+                        <span className="text-[var(--ink-muted)]">-</span>
                       )}
                     </td>
-                    <td className="p-3.5 font-sans text-slate-400">
-                      {r.timing.durationMs !== null ? `${r.timing.durationMs}ms` : "Running"}
+                    <td className="p-2.5 text-right text-[var(--ink-secondary)] tabular-nums">
+                      {r.timing.durationMs !== null ? `${r.timing.durationMs}ms` : "Active"}
                     </td>
-                    <td className="p-3.5 font-sans text-slate-400">
+                    <td className="p-2.5 text-[var(--ink-secondary)] tabular-nums">
                       {formatDate(r.timing.createdAt)}
                     </td>
                   </tr>
@@ -155,7 +176,7 @@ export function RunList({ onSelectRun }: RunListProps) {
 
         {/* Pagination Bar */}
         {total > pageSize && (
-          <div className="flex items-center justify-between p-3 border-t border-slate-800 bg-slate-950/60 text-xs text-slate-400">
+          <div className="flex items-center justify-between p-2.5 border-t border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-xs font-mono text-[var(--ink-secondary)]">
             <div>
               Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total}{" "}
               runs
@@ -165,20 +186,22 @@ export function RunList({ onSelectRun }: RunListProps) {
                 type="button"
                 onClick={() => setPage((p) => Math.max(p - 1, 1))}
                 disabled={page === 1}
-                className="p-1 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                aria-label="Previous page"
+                className="p-1 border border-[var(--border-hairline)] bg-[var(--bg-panel)] disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed text-[var(--ink-primary)]"
               >
-                <ChevronLeft className="w-4 h-4" />
+                <ChevronLeft className="w-3.5 h-3.5" />
               </button>
-              <span>
+              <span className="tabular-nums">
                 Page {page} of {totalPages}
               </span>
               <button
                 type="button"
                 onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
                 disabled={page === totalPages}
-                className="p-1 rounded border border-slate-800 bg-slate-900 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                aria-label="Next page"
+                className="p-1 border border-[var(--border-hairline)] bg-[var(--bg-panel)] disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed text-[var(--ink-primary)]"
               >
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>

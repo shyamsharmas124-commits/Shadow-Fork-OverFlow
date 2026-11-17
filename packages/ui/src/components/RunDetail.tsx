@@ -81,7 +81,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
 
   if (runLoading) {
     return (
-      <div className="flex items-center justify-center p-12 text-slate-400">
+      <div className="flex items-center justify-center p-8 text-xs font-mono text-[var(--ink-muted)]">
         Loading run details...
       </div>
     );
@@ -89,13 +89,12 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
 
   if (runError || !run) {
     return (
-      <div className="p-8 text-rose-400 bg-rose-950/20 border border-rose-900 rounded-lg">
+      <div className="p-4 text-xs font-mono text-[var(--status-failed-fg)] bg-[var(--status-failed-bg)] border border-[var(--status-failed-border)]">
         Failed to load run {runId}: {String(runError)}
       </div>
     );
   }
 
-  // Set default selected event to the first or latest event if none selected
   const activeEvent = selectedEvent ?? run.events[run.events.length - 1] ?? null;
 
   const activeStepDiff =
@@ -113,19 +112,20 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
   };
 
   return (
-    <div className="flex flex-col gap-6" data-testid="run-detail-view">
+    <div className="flex flex-col gap-4 font-mono text-xs" data-testid="run-detail-view">
       {/* Top action bar */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div className="flex items-center justify-between border-b border-[var(--border-hairline)] pb-3">
         <button
           type="button"
           onClick={onBack}
           data-testid="back-button"
-          className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to runs list
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Run Registry</span>
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* Single Accent per screen: Paprika Fork Run Button */}
           <button
             type="button"
             data-testid="open-fork-modal-btn"
@@ -133,7 +133,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
               setForkTargetEvent(activeEvent?.type === "StepCompleted" ? activeEvent : null);
               setIsForkModalOpen(true);
             }}
-            className="flex items-center gap-1.5 text-xs text-white bg-purple-600 hover:bg-purple-500 px-3 py-1.5 rounded font-medium cursor-pointer shadow-md shadow-purple-950/40"
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] border border-transparent cursor-pointer"
           >
             <GitFork className="w-3.5 h-3.5" />
             Fork Run
@@ -141,7 +141,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           <button
             type="button"
             onClick={() => refetch()}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded border border-slate-800 bg-slate-900 cursor-pointer"
+            className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
@@ -153,47 +153,48 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
       {run.mode === "shadow" && run.parentRunId && (
         <div
           data-testid="fork-provenance-banner"
-          className="flex flex-col gap-1 p-4 rounded-lg border border-purple-500/40 bg-purple-950/30 text-purple-200 text-xs shadow-md"
+          className="flex flex-col gap-1.5 p-3 border border-[var(--status-shadow-border)] bg-[var(--status-shadow-bg)] text-[var(--status-shadow-fg)]"
         >
-          <div className="flex items-center gap-2 font-semibold">
-            <GitFork className="w-4 h-4 text-purple-400 shrink-0" />
+          <div className="flex items-center gap-2 font-bold text-xs">
+            <GitFork className="w-4 h-4 shrink-0 text-[var(--ink-primary)]" />
             <span>
               Shadow fork of{" "}
               <button
                 type="button"
                 onClick={() => onSelectRun(run.parentRunId!)}
-                className="underline hover:text-purple-300 font-mono"
+                className="underline hover:opacity-80 font-mono font-bold"
               >
                 {run.parentRunId}
               </button>{" "}
-              at seq {run.forkedFromSeq}: effectful steps were not executed against live services.
+              at seq {run.forkedFromSeq}: effectful steps were not executed against live services
             </span>
           </div>
-          <p className="text-slate-400 text-[11px] pl-6">
-            State up to seq {run.forkedFromSeq} was seeded from parent history. Subsequent
-            side-effects were intercepted and captured safely.
+          <p className="text-[11px] text-[var(--ink-secondary)] pl-6">
+            Replay with overrides: state up to seq {run.forkedFromSeq} was seeded from parent
+            history. Subsequent side-effects were intercepted and captured safely. Safe: external
+            effects mocked / isolated.
           </p>
         </div>
       )}
 
-      {/* Pending Approval Banners */}
+      {/* Pending Approval Gate Cards */}
       {pendingApprovals.map((appr) => (
         <div
           key={appr.name}
           data-testid={`pending-approval-card-${appr.name}`}
-          className="flex flex-col gap-3 p-4 rounded-xl border border-amber-500/60 bg-amber-950/40 text-amber-200 shadow-lg"
+          className="flex flex-col gap-2.5 p-3 border border-[var(--status-running-border)] bg-[var(--status-running-bg)] text-[var(--status-running-fg)]"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold text-sm text-amber-100">
+                  <span className="font-bold text-xs uppercase tracking-wide">
                     Action Required: Human Approval Gate
                   </span>
                   <Badge variant="warning">Awaiting Decision</Badge>
                 </div>
-                <span className="text-xs text-amber-300/80 font-mono">
+                <span className="text-[11px] opacity-90">
                   Gate: {appr.name} (Seq {appr.seq})
                 </span>
               </div>
@@ -204,7 +205,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
                 data-testid={`approve-btn-${appr.name}`}
                 onClick={() => handleDecision(appr.name, "approve")}
                 disabled={isSubmittingDecision}
-                className="px-3.5 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white cursor-pointer shadow flex items-center gap-1.5"
+                className="px-3 py-1 text-xs font-bold bg-[#1E5A36] dark:bg-[#4EAD75] text-white dark:text-[#14281D] hover:opacity-90 disabled:opacity-50 cursor-pointer border border-transparent flex items-center gap-1"
               >
                 <Check className="w-3.5 h-3.5" /> Approve
               </button>
@@ -213,7 +214,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
                 data-testid={`reject-btn-${appr.name}`}
                 onClick={() => handleDecision(appr.name, "reject")}
                 disabled={isSubmittingDecision}
-                className="px-3.5 py-1.5 rounded text-xs font-semibold bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white cursor-pointer shadow flex items-center gap-1.5"
+                className="px-3 py-1 text-xs font-bold bg-[#B91C1C] dark:bg-[#F87171] text-white dark:text-[#321616] hover:opacity-90 disabled:opacity-50 cursor-pointer border border-transparent flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" /> Reject
               </button>
@@ -221,33 +222,33 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           </div>
           {appr.payload !== undefined && appr.payload !== null && (
             <div className="mt-1">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider block mb-1 text-[var(--ink-secondary)]">
                 Approval Request Payload
               </span>
-              <pre className="p-2.5 bg-slate-950/90 border border-slate-800 rounded font-mono text-xs text-slate-200 overflow-x-auto whitespace-pre-wrap break-all">
+              <pre className="p-2 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-xs text-[var(--ink-primary)] overflow-x-auto whitespace-pre-wrap break-all">
                 <code>{JSON.stringify(appr.payload, null, 2)}</code>
               </pre>
             </div>
           )}
           {approvalError && (
-            <div className="text-xs text-rose-400 bg-rose-950/50 p-2 rounded border border-rose-800">
+            <div className="text-[11px] text-[var(--status-failed-fg)] bg-[var(--status-failed-bg)] p-1.5 border border-[var(--status-failed-border)]">
               {approvalError}
             </div>
           )}
         </div>
       ))}
 
-      {/* Header Info */}
-      <div className="flex flex-col gap-3 p-5 rounded-lg border border-slate-800 bg-slate-900/50">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-mono font-bold text-slate-100">{run.id}</h1>
+      {/* Header Info Panel */}
+      <div className="flex flex-col gap-2.5 p-3.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-sm font-mono font-bold text-[var(--ink-primary)]">{run.id}</h1>
             <StatusBadge status={run.status} />
             <ModeBadge mode={run.mode} />
           </div>
-          <div className="flex items-center gap-4 text-xs text-slate-400">
+          <div className="flex items-center gap-3 text-[11px] text-[var(--ink-secondary)] tabular-nums">
             <span className="flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5 text-slate-500" />
+              <Clock className="w-3.5 h-3.5 text-[var(--ink-muted)]" />
               Duration:{" "}
               {run.timing.durationMs !== null ? `${run.timing.durationMs}ms` : "In Progress"}
             </span>
@@ -255,28 +256,30 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3 border-t border-slate-800/60 text-xs">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-2.5 border-t border-[var(--border-hairline)] text-[11px]">
           <div>
-            <span className="text-slate-500">Workflow: </span>
-            <span className="font-mono text-slate-200 font-semibold">{run.workflowType}</span>
+            <span className="text-[var(--ink-muted)]">Workflow: </span>
+            <span className="font-bold text-[var(--ink-primary)]">{run.workflowType}</span>
           </div>
           <div>
-            <span className="text-slate-500">Parent Run: </span>
+            <span className="text-[var(--ink-muted)]">Parent Run: </span>
             {run.parentRunId ? (
               <button
                 type="button"
                 onClick={() => onSelectRun(run.parentRunId!)}
-                className="font-mono text-purple-400 hover:underline cursor-pointer"
+                className="text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline cursor-pointer"
               >
                 {run.parentRunId} (seq {run.forkedFromSeq})
               </button>
             ) : (
-              <span className="text-slate-400">None (Root)</span>
+              <span className="text-[var(--ink-muted)]">None (Root)</span>
             )}
           </div>
           <div>
-            <span className="text-slate-500">Events Recorded: </span>
-            <span className="font-mono text-slate-200">{run.events.length}</span>
+            <span className="text-[var(--ink-muted)]">Events Recorded: </span>
+            <span className="font-bold text-[var(--ink-primary)] tabular-nums">
+              {run.events.length}
+            </span>
           </div>
         </div>
       </div>
@@ -285,15 +288,15 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
       <LineageGraph run={run} onSelectRun={onSelectRun} />
 
       {/* View Tabs */}
-      <div className="flex items-center gap-4 border-b border-slate-800 pt-2">
+      <div className="flex items-center gap-2 border-b border-[var(--border-hairline)]">
         <button
           type="button"
           data-testid="tab-timeline"
           onClick={() => setActiveTab("timeline")}
-          className={`pb-3 px-3 text-xs font-semibold border-b-2 cursor-pointer transition-colors ${
+          className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors ${
             activeTab === "timeline"
-              ? "border-purple-500 text-purple-400"
-              : "border-transparent text-slate-400 hover:text-slate-200"
+              ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"
+              : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink-primary)]"
           }`}
         >
           Timeline & Events ({run.events.length})
@@ -303,10 +306,10 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
             type="button"
             data-testid="tab-diff"
             onClick={() => setActiveTab("diff")}
-            className={`pb-3 px-3 text-xs font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
               activeTab === "diff"
-                ? "border-purple-500 text-purple-400"
-                : "border-transparent text-slate-400 hover:text-slate-200"
+                ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"
+                : "border-transparent text-[var(--ink-muted)] hover:text-[var(--ink-primary)]"
             }`}
           >
             <SplitSquareVertical className="w-3.5 h-3.5" />
@@ -317,9 +320,9 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
 
       {activeTab === "timeline" ? (
         /* Timeline & Detail Split */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-[11px] font-bold text-[var(--ink-secondary)] uppercase tracking-wider">
               Event Timeline ({run.events.length})
             </h2>
             <EventTimeline
@@ -330,8 +333,8 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
             />
           </div>
 
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-[11px] font-bold text-[var(--ink-secondary)] uppercase tracking-wider">
               Event Inspection & Details
             </h2>
             <EventDetailPanel
@@ -348,31 +351,36 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
 
       {/* Active Tasks Panel */}
       {run.tasks.length > 0 && (
-        <div className="flex flex-col gap-3 p-5 rounded-lg border border-slate-800 bg-slate-900/40">
-          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
-            Task State & Leases ({run.tasks.length})
-          </h2>
+        <div className="flex flex-col gap-2 p-3 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[11px] font-bold text-[var(--ink-secondary)] uppercase tracking-wider">
+              Task State & Leases ({run.tasks.length})
+            </h2>
+            <span className="text-[10px] text-[var(--ink-muted)]">
+              Idempotency Key derived: h(run_id, step_name, occurrence_idx)
+            </span>
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left text-slate-300">
-              <thead className="bg-slate-950 text-slate-400 uppercase border-b border-slate-800">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-[var(--bg-subtle)] text-[var(--ink-secondary)] uppercase text-[10px] border-b border-[var(--border-hairline)]">
                 <tr>
-                  <th className="p-2.5">Step Key</th>
-                  <th className="p-2.5">Status</th>
-                  <th className="p-2.5">Attempt</th>
-                  <th className="p-2.5">Lease Owner</th>
-                  <th className="p-2.5">Run At</th>
+                  <th className="p-2 font-bold">Step Key</th>
+                  <th className="p-2 font-bold">Status</th>
+                  <th className="p-2 font-bold">Attempt</th>
+                  <th className="p-2 font-bold">Lease Owner</th>
+                  <th className="p-2 font-bold">Run At</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono">
+              <tbody className="divide-y divide-[var(--border-hairline)] font-mono">
                 {run.tasks.map((task) => (
-                  <tr key={task.id} className="hover:bg-slate-800/30">
-                    <td className="p-2.5 font-medium">{task.stepKey}</td>
-                    <td className="p-2.5">
+                  <tr key={task.id} className="hover:bg-[var(--bg-hover)]">
+                    <td className="p-2 font-bold text-[var(--ink-primary)]">{task.stepKey}</td>
+                    <td className="p-2">
                       <span className="capitalize">{task.status}</span>
                     </td>
-                    <td className="p-2.5">{task.attempt}</td>
-                    <td className="p-2.5 text-slate-400">{task.leaseOwner ?? "None"}</td>
-                    <td className="p-2.5 text-slate-400">
+                    <td className="p-2 tabular-nums">{task.attempt}</td>
+                    <td className="p-2 text-[var(--ink-secondary)]">{task.leaseOwner ?? "None"}</td>
+                    <td className="p-2 text-[var(--ink-secondary)] tabular-nums">
                       {formatDate(task.runAt, { timeOnly: true })}
                     </td>
                   </tr>

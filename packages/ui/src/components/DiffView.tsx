@@ -13,7 +13,7 @@ function JsonTruncated({ data, maxChars = 200 }: { data: unknown; maxChars?: num
 
   if (text.length <= maxChars) {
     return (
-      <pre className="p-2 bg-slate-950 border border-slate-800 rounded text-[11px] font-mono text-slate-200 overflow-x-auto whitespace-pre-wrap break-all">
+      <pre className="p-2 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-[11px] font-mono text-[var(--ink-primary)] overflow-x-auto whitespace-pre-wrap break-all">
         <code>{text}</code>
       </pre>
     );
@@ -21,13 +21,13 @@ function JsonTruncated({ data, maxChars = 200 }: { data: unknown; maxChars?: num
 
   return (
     <div className="flex flex-col gap-1">
-      <pre className="p-2 bg-slate-950 border border-slate-800 rounded text-[11px] font-mono text-slate-200 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+      <pre className="p-2 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-[11px] font-mono text-[var(--ink-primary)] overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
         <code>{expanded ? text : `${text.slice(0, maxChars)}...`}</code>
       </pre>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="text-[10px] text-purple-400 hover:text-purple-300 self-start flex items-center gap-1 cursor-pointer"
+        className="text-[10px] font-mono text-[var(--ink-primary)] hover:underline self-start flex items-center gap-1 cursor-pointer"
       >
         {expanded ? (
           <>
@@ -49,7 +49,7 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
       case "reused":
         return <Badge variant="cyan">Reused from Parent</Badge>;
       case "modified":
-        return <Badge variant="purple">Modified / Edited</Badge>;
+        return <Badge variant="shadow">Modified / Edited</Badge>;
       case "added":
         return <Badge variant="success">Added in Fork</Badge>;
       case "failed-in-parent":
@@ -66,16 +66,16 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
   return (
     <div
       data-testid={`diff-step-${item.stepName}-${item.occurrence}`}
-      className="flex flex-col rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden shadow-sm"
+      className="flex flex-col border border-[var(--border-hairline)] bg-[var(--bg-panel)] overflow-hidden font-mono text-xs"
     >
       {/* Step Header */}
-      <div className="flex items-center justify-between p-3.5 bg-slate-950/80 border-b border-slate-800">
-        <div className="flex items-center gap-2.5">
-          <span className="font-mono font-bold text-sm text-slate-100">{item.stepName}</span>
-          <span className="font-mono text-xs text-slate-400">occ {item.occurrence}</span>
+      <div className="flex items-center justify-between p-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-hairline)]">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-xs text-[var(--ink-primary)]">{item.stepName}</span>
+          <span className="text-[10px] text-[var(--ink-muted)]">occ {item.occurrence}</span>
           {getStatusBadge(item.status)}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {item.reusedFromParent && <Badge variant="cyan">reusedFromParent</Badge>}
           {item.inputChangedFromParent && <Badge variant="warning">inputChangedFromParent</Badge>}
         </div>
@@ -85,49 +85,49 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
       {hasProvenanceWarning && (
         <div
           data-testid="diff-provenance-warning"
-          className="m-3 p-3 bg-amber-950/50 border border-amber-500/60 rounded text-amber-200 text-xs flex items-start gap-2.5"
+          className="m-2.5 p-2 bg-[var(--status-running-bg)] border border-[var(--status-running-border)] text-[var(--status-running-fg)] flex items-start gap-2"
         >
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold">Provenance Warning:</span>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-0.5 text-[11px]">
+            <span className="font-bold">Provenance Warning:</span>
             <span>This result is from the original run and was produced from different input.</span>
           </div>
         </div>
       )}
 
       {/* Side-by-side comparison */}
-      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800/80 p-4 gap-4 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[var(--border-hairline)] p-3 gap-3 text-xs">
         {/* Left Column: Parent Run */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/60 font-semibold text-slate-300">
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between pb-1 border-b border-[var(--border-hairline)] font-bold text-[var(--ink-secondary)]">
             <span>Parent Run (Live)</span>
             {item.parent?.seq !== undefined && (
-              <span className="font-mono text-[11px] text-slate-500">Seq {item.parent.seq}</span>
+              <span className="text-[10px] text-[var(--ink-muted)]">Seq {item.parent.seq}</span>
             )}
           </div>
           {item.parent ? (
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-2">
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                   Input
                 </span>
                 <JsonTruncated data={item.parent.input} />
               </div>
               {item.parent.failed ? (
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400 mb-1 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--status-failed-fg)] mb-0.5 block">
                     Parent Error
                   </span>
                   <div
                     data-testid="diff-parent-error"
-                    className="p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-200 font-mono text-xs break-all"
+                    className="p-2 bg-[var(--status-failed-bg)] border border-[var(--status-failed-border)] text-[var(--status-failed-fg)] text-xs break-all"
                   >
                     {item.parent.error ?? "Failed in parent"}
                   </div>
                 </div>
               ) : (
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                     Result
                   </span>
                   <JsonTruncated data={item.parent.result} />
@@ -135,19 +135,19 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
               )}
               {item.parent.effects && item.parent.effects.length > 0 && (
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                     Effects ({item.parent.effects.length})
                   </span>
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
                     {item.parent.effects.map((eff) => (
                       <div
                         key={`${eff.kind}-${JSON.stringify(eff.request)}`}
-                        className="p-2.5 rounded bg-slate-950 border border-slate-800 flex flex-col gap-1.5"
+                        className="p-2 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] flex flex-col gap-1"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-purple-300">{eff.kind}</span>
+                          <span className="font-bold text-[var(--ink-primary)]">{eff.kind}</span>
                           {eff.resultSource && (
-                            <span className="text-[10px] text-slate-400 font-mono">
+                            <span className="text-[10px] text-[var(--ink-muted)]">
                               source: {eff.resultSource}
                             </span>
                           )}
@@ -160,59 +160,57 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
               )}
             </div>
           ) : (
-            <div className="p-6 text-center text-slate-500 italic">
+            <div className="p-4 text-center text-[var(--ink-muted)] italic">
               Step did not execute in parent run.
             </div>
           )}
         </div>
 
         {/* Right Column: Shadow Fork */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800/60 font-semibold text-purple-300">
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between pb-1 border-b border-[var(--border-hairline)] font-bold text-[var(--ink-primary)]">
             <span>Shadow Fork</span>
             {item.shadow?.seq !== undefined && (
-              <span className="font-mono text-[11px] text-purple-400/70">
-                Seq {item.shadow.seq}
-              </span>
+              <span className="text-[10px] text-[var(--ink-muted)]">Seq {item.shadow.seq}</span>
             )}
           </div>
           {item.shadow ? (
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-2">
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                   Input
                 </span>
                 <JsonTruncated data={item.shadow.input} />
               </div>
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                   Result
                 </span>
                 <JsonTruncated data={item.shadow.result} />
               </div>
               {item.shadow.effects && item.shadow.effects.length > 0 && (
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] mb-0.5 block">
                     Captured Effects ({item.shadow.effects.length})
                   </span>
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
                     {item.shadow.effects.map((eff) => {
                       const isMock = eff.resultSource === "mock";
                       return (
                         <div
                           key={`${eff.kind}-${eff.resultSource}-${JSON.stringify(eff.request)}`}
-                          className="p-2.5 rounded bg-slate-950 border border-slate-800 flex flex-col gap-1.5"
+                          className="p-2 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] flex flex-col gap-1"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-mono text-purple-300">{eff.kind}</span>
+                            <span className="font-bold text-[var(--ink-primary)]">{eff.kind}</span>
                             <div className="flex items-center gap-1.5">
                               {isMock && (
-                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-purple-950 border border-purple-500/40 text-purple-300 font-mono">
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-[var(--status-shadow-bg)] border border-[var(--status-shadow-border)] text-[var(--status-shadow-fg)] font-mono">
                                   <Sparkles className="w-2.5 h-2.5" /> mock
                                 </span>
                               )}
                               {eff.resultSource && !isMock && (
-                                <span className="text-[10px] text-slate-400 font-mono">
+                                <span className="text-[10px] text-[var(--ink-muted)]">
                                   source: {eff.resultSource}
                                 </span>
                               )}
@@ -221,7 +219,7 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
                           <JsonTruncated data={eff.request} maxChars={150} />
                           {eff.wouldHaveResult !== undefined && (
                             <div>
-                              <span className="text-[10px] text-slate-400 block mb-0.5">
+                              <span className="text-[10px] text-[var(--ink-muted)] block mb-0.5">
                                 Would Have Returned:
                               </span>
                               <JsonTruncated data={eff.wouldHaveResult} maxChars={150} />
@@ -235,7 +233,7 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
               )}
             </div>
           ) : (
-            <div className="p-6 text-center text-slate-500 italic">
+            <div className="p-4 text-center text-[var(--ink-muted)] italic">
               Step did not execute in shadow fork.
             </div>
           )}
@@ -248,31 +246,32 @@ function StepDiffCard({ item }: { item: EffectDiffItem }) {
 export function DiffView({ diff }: DiffViewProps) {
   if (!diff.steps || diff.steps.length === 0) {
     return (
-      <div className="p-8 text-center text-slate-500 text-sm border border-slate-800 rounded-lg bg-slate-900/40">
+      <div className="p-6 text-center text-[var(--ink-muted)] text-xs border border-[var(--border-hairline)] bg-[var(--bg-panel)] font-mono">
         No step diff items available to compare.
       </div>
     );
   }
 
   return (
-    <div data-testid="diff-view" className="flex flex-col gap-4">
+    <div data-testid="diff-view" className="flex flex-col gap-3 font-mono">
       {/* Diff View Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-lg border border-slate-800 bg-slate-900/50">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
         <div className="flex items-center gap-2">
-          <GitFork className="w-4 h-4 text-purple-400" />
-          <span className="text-sm font-semibold text-slate-200">Execution Diff</span>
-          <span className="text-xs text-slate-400">
-            Comparing Parent ({diff.parentRunId?.slice(0, 8)}...) vs Shadow Fork (
-            {diff.runId.slice(0, 8)}...)
+          <GitFork className="w-4 h-4 text-[var(--ink-primary)]" />
+          <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-primary)]">
+            Execution Diff &bull; State & Effect Comparison
+          </span>
+          <span className="text-[11px] text-[var(--ink-secondary)]">
+            Parent ({diff.parentRunId?.slice(0, 8)}...) vs Shadow Fork ({diff.runId.slice(0, 8)}...)
           </span>
         </div>
-        <div className="text-xs text-slate-400 font-mono">
+        <div className="text-xs text-[var(--ink-secondary)] tabular-nums">
           {diff.steps.length} step{diff.steps.length === 1 ? "" : "s"} aligned
         </div>
       </div>
 
       {/* Step Cards List */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
         {diff.steps.map((step) => (
           <StepDiffCard key={`${step.stepName}-${step.occurrence}`} item={step} />
         ))}
