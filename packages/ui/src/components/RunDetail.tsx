@@ -3,6 +3,9 @@ import {
   ArrowLeft,
   Check,
   Clock,
+  Code,
+  Download,
+  GitCompare,
   GitFork,
   RefreshCw,
   ShieldAlert,
@@ -11,29 +14,40 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { getEffects, getRun, submitApprovalApi } from "../api.js";
-import type { RunEvent } from "../types.js";
+import type { RunEvent, RunSummary } from "../types.js";
 import { formatDate } from "../utils/date.js";
 import { startViewTransition } from "../utils/motion.js";
 import { Badge, ModeBadge, StatusBadge } from "./Badge.js";
+import { CliSnippetModal } from "./CliSnippetModal.js";
+import { CompareRunsModal } from "./CompareRunsModal.js";
 import { DiffView } from "./DiffView.js";
 import { EventDetailPanel } from "./EventDetailPanel.js";
 import { EventTimeline } from "./EventTimeline.js";
 import { ForkModal } from "./ForkModal.js";
 import { LineageGraph } from "./LineageGraph.js";
+import { RunExportModal } from "./RunExportModal.js";
+import { RunDetailSkeleton } from "./Skeleton.js";
+import { TimelineScrubber } from "./TimelineScrubber.js";
 
 interface RunDetailProps {
   runId: string;
   onBack: () => void;
   onSelectRun: (id: string) => void;
+  allRuns?: RunSummary[];
 }
 
-export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
+export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetailProps) {
   const [selectedEvent, setSelectedEvent] = useState<RunEvent | null>(null);
   const [isForkModalOpen, setIsForkModalOpen] = useState<boolean>(false);
   const [forkTargetEvent, setForkTargetEvent] = useState<RunEvent | null>(null);
   const [activeTab, setActiveTab] = useState<"timeline" | "diff">("timeline");
   const [isSubmittingDecision, setIsSubmittingDecision] = useState<boolean>(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  // Stage 3 Modals
+  const [isCliModalOpen, setIsCliModalOpen] = useState<boolean>(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState<boolean>(false);
 
   const {
     data: run,
@@ -82,8 +96,18 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
 
   if (runLoading) {
     return (
-      <div className="flex items-center justify-center p-8 text-xs font-mono text-[var(--ink-muted)]">
-        Loading run details...
+      <div className="flex flex-col gap-4 font-mono text-xs">
+        <div className="flex items-center justify-between border-b border-[var(--border-hairline)] pb-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to Run Registry</span>
+          </button>
+        </div>
+        <RunDetailSkeleton />
       </div>
     );
   }
@@ -115,7 +139,7 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
   return (
     <div className="flex flex-col gap-4 font-mono text-xs" data-testid="run-detail-view">
       {/* Top action bar */}
-      <div className="flex items-center justify-between border-b border-[var(--border-hairline)] pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-hairline)] pb-3">
         <button
           type="button"
           onClick={onBack}
@@ -125,7 +149,44 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>Back to Run Registry</span>
         </button>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Compare Button */}
+          <button
+            type="button"
+            data-testid="open-compare-btn"
+            onClick={() => setIsCompareModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            title="Compare with another run"
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            Compare
+          </button>
+
+          {/* cURL / CLI snippets */}
+          <button
+            type="button"
+            data-testid="open-snippets-btn"
+            onClick={() => setIsCliModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            title="cURL and CLI commands"
+          >
+            <Code className="w-3.5 h-3.5" />
+            cURL / CLI
+          </button>
+
+          {/* Export JSON & Permalink */}
+          <button
+            type="button"
+            data-testid="open-export-btn"
+            onClick={() => setIsExportModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
+            title="Export Redacted JSON & Permalink"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export Trace
+          </button>
+
           {/* Single Accent per screen: Paprika Fork Run Button */}
           <button
             type="button"
@@ -139,8 +200,10 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
             <GitFork className="w-3.5 h-3.5" />
             Fork Run
           </button>
+
           <button
             type="button"
+            data-testid="refresh-run-btn"
             onClick={() => refetch()}
             className="flex items-center gap-1.5 text-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
           >
@@ -287,8 +350,15 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
         </div>
       </div>
 
-      {/* Lineage Graph */}
-      <LineageGraph run={run} onSelectRun={onSelectRun} />
+      {/* Feature 1: Replay Scrubber */}
+      <TimelineScrubber
+        events={run.events}
+        selectedSeq={activeEvent?.seq ?? null}
+        onSelectEvent={setSelectedEvent}
+      />
+
+      {/* Lineage & Fork Tree Graph */}
+      <LineageGraph run={run} onSelectRun={onSelectRun} allRuns={allRuns} />
 
       {/* View Tabs */}
       <div className="flex items-center gap-2 border-b border-[var(--border-hairline)]">
@@ -416,6 +486,26 @@ export function RunDetail({ runId, onBack, onSelectRun }: RunDetailProps) {
           setForkTargetEvent(null);
           onSelectRun(forkRunId);
         }}
+      />
+
+      {/* Feature 4: Cli / cURL Snippet Modal */}
+      <CliSnippetModal run={run} isOpen={isCliModalOpen} onClose={() => setIsCliModalOpen(false)} />
+
+      {/* Feature 9: Run Export & Permalink Modal */}
+      <RunExportModal
+        run={run}
+        selectedEvent={activeEvent}
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+      />
+
+      {/* Feature 6: Compare Any Two Runs Modal */}
+      <CompareRunsModal
+        isOpen={isCompareModalOpen}
+        onClose={() => setIsCompareModalOpen(false)}
+        runs={allRuns}
+        initialRunA={run.parentRunId || run.id}
+        initialRunB={run.id}
       />
     </div>
   );

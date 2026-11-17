@@ -1,4 +1,4 @@
-import type { EffectDiffResponse, RunDetail, RunsResponse } from "./types.js";
+import type { EffectDiffResponse, RunDetail, RunsResponse, WorkersResponse } from "./types.js";
 
 const API_BASE = "/api";
 
@@ -97,6 +97,14 @@ export async function submitApprovalApi(
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
     throw new Error(errBody.error || `Approval failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getWorkersApi(): Promise<WorkersResponse> {
+  const res = await fetch(`${API_BASE}/workers`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch workers: ${res.statusText}`);
   }
   return res.json();
 }

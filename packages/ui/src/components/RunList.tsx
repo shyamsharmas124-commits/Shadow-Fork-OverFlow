@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, GitFork, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, GitFork, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { getRuns } from "../api.js";
 import { formatDate } from "../utils/date.js";
 import { ModeBadge, StatusBadge } from "./Badge.js";
+import { MetricsStrip } from "./MetricsStrip.js";
+import { RunListSkeleton } from "./Skeleton.js";
 
 interface RunListProps {
   onSelectRun: (id: string) => void;
@@ -31,11 +33,21 @@ export function RunList({ onSelectRun }: RunListProps) {
   const totalPages = Math.ceil(total / pageSize) || 1;
   const paginatedRuns = runs.slice((page - 1) * pageSize, page * pageSize);
 
+  const hasFilters = statusFilter !== "" || modeFilter !== "";
+  const clearFilters = () => {
+    setStatusFilter("");
+    setModeFilter("");
+    setPage(1);
+  };
+
   return (
-    <div className="flex flex-col gap-4" data-testid="run-list-view">
+    <div className="flex flex-col gap-4 font-mono text-xs" data-testid="run-list-view">
+      {/* Metrics Telemetry Strip */}
+      <MetricsStrip runs={runs} />
+
       {/* Title & Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 border border-[var(--border-hairline)] bg-[var(--bg-panel)]">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--ink-primary)]">
             Run Registry
           </h1>
@@ -49,6 +61,7 @@ export function RunList({ onSelectRun }: RunListProps) {
           </label>
           <select
             id="status-select"
+            data-testid="status-filter-select"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
@@ -70,6 +83,7 @@ export function RunList({ onSelectRun }: RunListProps) {
           </label>
           <select
             id="mode-select"
+            data-testid="mode-filter-select"
             value={modeFilter}
             onChange={(e) => {
               setModeFilter(e.target.value);
@@ -81,10 +95,22 @@ export function RunList({ onSelectRun }: RunListProps) {
             <option value="live">Live Only</option>
             <option value="shadow">Shadow Only</option>
           </select>
+
+          {hasFilters && (
+            <button
+              type="button"
+              data-testid="clear-filters-btn"
+              onClick={clearFilters}
+              className="flex items-center gap-1 text-[11px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline cursor-pointer"
+            >
+              <X className="w-3 h-3" /> Clear filters
+            </button>
+          )}
         </div>
 
         <button
           type="button"
+          data-testid="refresh-runs-btn"
           onClick={() => refetch()}
           className="flex items-center gap-1.5 text-xs font-mono text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] px-2.5 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] cursor-pointer"
         >
@@ -96,16 +122,41 @@ export function RunList({ onSelectRun }: RunListProps) {
       {/* Dense Registry Table */}
       <div className="border border-[var(--border-hairline)] bg-[var(--bg-panel)] overflow-hidden">
         {isLoading ? (
-          <div className="p-8 text-center text-xs font-mono text-[var(--ink-muted)]">
-            Loading workflow runs...
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-[var(--bg-subtle)] text-[var(--ink-secondary)] uppercase tracking-wider font-mono text-[11px] border-b border-[var(--border-hairline)]">
+                <tr>
+                  <th className="p-2.5 font-bold">Run ID</th>
+                  <th className="p-2.5 font-bold">Workflow</th>
+                  <th className="p-2.5 font-bold">Status</th>
+                  <th className="p-2.5 font-bold">Mode</th>
+                  <th className="p-2.5 font-bold">Parent Run</th>
+                  <th className="p-2.5 font-bold text-right">Duration</th>
+                  <th className="p-2.5 font-bold">Created At</th>
+                </tr>
+              </thead>
+              <RunListSkeleton />
+            </table>
           </div>
         ) : error ? (
           <div className="p-6 text-center text-xs font-mono text-[var(--status-failed-fg)]">
             Failed to load runs: {String(error)}
           </div>
         ) : runs.length === 0 ? (
-          <div className="p-8 text-center text-xs font-mono text-[var(--ink-muted)]">
-            No workflow runs found in registry.
+          <div
+            data-testid="empty-runs-state"
+            className="p-12 text-center text-xs font-mono text-[var(--ink-muted)] flex flex-col items-center justify-center gap-2"
+          >
+            <span>No workflow runs found matching the active filter criteria.</span>
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="px-3 py-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] cursor-pointer"
+              >
+                Reset Filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

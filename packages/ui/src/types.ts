@@ -102,3 +102,41 @@ export interface EffectDiffResponse {
   mode: string;
   steps: EffectDiffItem[];
 }
+
+export interface WorkerInfo {
+  workerId: string;
+  status: "active" | "idle" | "stale";
+  activeTasksCount: number;
+  totalTasksCount: number;
+  lastHeartbeatAt: string | null;
+  leaseExpiresAt: string | null;
+  currentTasks: Array<{
+    id: string;
+    runId: string;
+    stepKey: string;
+    attempt: number;
+    status: string;
+    leaseExpiresAt: string | null;
+    lastHeartbeatAt: string | null;
+    workflowType: string;
+  }>;
+}
+
+export interface ActiveLeaseInfo {
+  id: string;
+  runId: string;
+  stepKey: string;
+  attempt: number;
+  status: string;
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  lastHeartbeatAt: string | null;
+  workflowType: string;
+}
+
+export interface WorkersResponse {
+  workers: WorkerInfo[];
+  activeLeases: ActiveLeaseInfo[];
+  totalWorkers: number;
+  totalActiveLeases: number;
+}
