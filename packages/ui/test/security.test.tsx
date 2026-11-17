@@ -53,4 +53,60 @@ describe("Milestone 5b - UI XSS & Security Rendering", () => {
     expect(container.querySelectorAll("img").length).toBe(0);
     expect(container.textContent).toContain("window.__pwned=1");
   });
+
+  it("Feature 4: 'What would have been sent' curl command redacts all planted secrets and never exposes them", () => {
+    const SECRET_AUTH_TOKEN = "tok_planted_secret_99999";
+    const SECRET_API_KEY = "sk-planted-api-key-88888";
+    const SECRET_PASSWORD = "secret_password_77777";
+    const SECRET_QUERY_TOKEN = "tok_query_secret_66666";
+
+    const effectEvent: RunEvent = {
+      seq: 3,
+      type: "EffectCaptured",
+      payload: {
+        stepName: "send-payment",
+        kind: "effectful-external",
+        request: {
+          url: `https://api.stripe.com/v1/charges?token=${SECRET_QUERY_TOKEN}`,
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SECRET_AUTH_TOKEN}`,
+            "X-Api-Key": SECRET_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: {
+            amount: 5000,
+            password: SECRET_PASSWORD,
+            currency: "usd",
+          },
+        },
+        resultSource: "mock",
+      },
+      createdAt: new Date().toISOString(),
+    };
+
+    const { getByTestId } = render(<EventDetailPanel event={effectEvent} />);
+
+    const panel = getByTestId("what-would-have-been-sent-panel");
+    expect(panel).toBeDefined();
+
+    const curlElem = getByTestId("what-would-have-been-sent-curl");
+    const curlText = curlElem.textContent ?? "";
+
+    // 1. Assert curlText contains redacted placeholders
+    expect(curlText).toContain("[REDACTED]");
+
+    // 2. Assert NONE of the planted secrets appear in the rendered text
+    expect(curlText).not.toContain(SECRET_AUTH_TOKEN);
+    expect(curlText).not.toContain(SECRET_API_KEY);
+    expect(curlText).not.toContain(SECRET_PASSWORD);
+    expect(curlText).not.toContain(SECRET_QUERY_TOKEN);
+
+    // 3. Assert panel text does not leak the secrets either
+    const panelText = panel.textContent ?? "";
+    expect(panelText).not.toContain(SECRET_AUTH_TOKEN);
+    expect(panelText).not.toContain(SECRET_API_KEY);
+    expect(panelText).not.toContain(SECRET_PASSWORD);
+    expect(panelText).not.toContain(SECRET_QUERY_TOKEN);
+  });
 });

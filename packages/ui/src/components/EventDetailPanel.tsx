@@ -1,5 +1,7 @@
-import { AlertTriangle, GitFork, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, Copy, GitFork, Send, Sparkles } from "lucide-react";
+import { useState } from "react";
 import type { EffectDiffItem, RunEvent } from "../types.js";
+import { buildWhatWouldHaveBeenSentCurl } from "../utils/curl.js";
 import { formatDate } from "../utils/date.js";
 import { Badge } from "./Badge.js";
 
@@ -10,6 +12,8 @@ interface EventDetailPanelProps {
 }
 
 export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetailPanelProps) {
+  const [copiedCurl, setCopiedCurl] = useState<boolean>(false);
+
   if (!event) {
     return (
       <div className="h-full flex items-center justify-center p-6 text-center text-[var(--ink-muted)] text-xs border border-[var(--border-hairline)] bg-[var(--bg-panel)] font-mono">
@@ -27,6 +31,20 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
   const resultSource =
     (p.resultSource as string | undefined) ?? stepDiff?.shadow?.effects?.[0]?.resultSource;
   const isMock = resultSource === "mock";
+
+  // Check if there is an effect request payload
+  const effectRequest =
+    p.request || stepDiff?.shadow?.effects?.[0]?.request || (isEffectCaptured ? p : null);
+  const curlCommand = isEffectCaptured ? buildWhatWouldHaveBeenSentCurl(effectRequest) : null;
+
+  const handleCopyCurl = () => {
+    if (!curlCommand) return;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(curlCommand).catch(() => {});
+    }
+    setCopiedCurl(true);
+    setTimeout(() => setCopiedCurl(false), 2000);
+  };
 
   return (
     <div
@@ -89,6 +107,43 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
               step succeeded using simulated responses without external mutations.
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Feature 4: What would have been sent */}
+      {isEffectCaptured && curlCommand && (
+        <div
+          data-testid="what-would-have-been-sent-panel"
+          className="p-3 border border-[var(--status-shadow-border)] bg-[var(--bg-subtle)] flex flex-col gap-2"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-[var(--ink-primary)] font-bold text-[11px] uppercase tracking-wider">
+              <Send className="w-3.5 h-3.5 text-[var(--status-shadow-fg)]" />
+              <span>What would have been sent</span>
+            </div>
+            <button
+              type="button"
+              data-testid="copy-what-would-have-sent-btn"
+              onClick={handleCopyCurl}
+              className="flex items-center gap-1 px-2 py-0.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] text-[10px] cursor-pointer"
+            >
+              {copiedCurl ? (
+                <>
+                  <Check className="w-3 h-3 text-[#1E5A36] dark:text-[#4EAD75]" /> Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" /> Copy cURL
+                </>
+              )}
+            </button>
+          </div>
+          <pre className="p-2 bg-[var(--bg-panel)] border border-[var(--border-hairline)] text-[11px] overflow-x-auto whitespace-pre-wrap break-all text-[var(--ink-primary)]">
+            <code data-testid="what-would-have-been-sent-curl">{curlCommand}</code>
+          </pre>
+          <span className="text-[10px] text-[var(--ink-muted)]">
+            Shadow effect intercepted. Real network mutation suppressed. Sensitive tokens redacted.
+          </span>
         </div>
       )}
 
