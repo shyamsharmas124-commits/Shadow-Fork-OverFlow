@@ -134,7 +134,7 @@ async function main() {
     console.error(`[!] events_no_update trigger check failed: ${db1}=${hasTriggerA}, ${db2}=${hasTriggerB}`);
     diffFound = true;
   } else {
-    console.log(`[✓] Trigger 'events_no_update' on table 'events' verified present on both ${db1} and ${db2}.`);
+    console.log(`[PASS] Trigger 'events_no_update' on table 'events' verified present on both ${db1} and ${db2}.`);
   }
 
   if (!diffFound) {

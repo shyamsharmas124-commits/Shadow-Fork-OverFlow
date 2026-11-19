@@ -52,9 +52,9 @@ async function main() {
   // 2. Start mock external services
   console.log("[1/6] Starting mock external HTTP services on loopback...");
   const mocks = await startMockServers();
-  console.log(`      ✓ Risk Assessment API:    ${mocks.riskServerUrl}`);
-  console.log(`      ✓ Payment Gateway API:    ${mocks.paymentServerUrl}`);
-  console.log(`      ✓ Customer Notification:  ${mocks.notificationServerUrl}`);
+  console.log(`      [OK] Risk Assessment API:    ${mocks.riskServerUrl}`);
+  console.log(`      [OK] Payment Gateway API:    ${mocks.paymentServerUrl}`);
+  console.log(`      [OK] Customer Notification:  ${mocks.notificationServerUrl}`);
 
   // 3. Initialize engine & worker
   const engine = new Engine(pool);
@@ -83,7 +83,7 @@ Total: $1,250.00
     paymentServiceUrl: mocks.paymentServerUrl,
     notificationServiceUrl: mocks.notificationServerUrl,
   });
-  console.log(`      ✓ Started run: ${parentRunId}`);
+  console.log(`      [OK] Started run: ${parentRunId}`);
 
   // Tick worker until parked
   console.log("      Worker executing steps (LLM extraction, Risk Assessment)...");
@@ -126,7 +126,7 @@ Total: $1,250.00
       },
     },
   });
-  console.log(`      ✓ Forked shadow run: ${forkRunId}`);
+  console.log(`      [OK] Forked shadow run: ${forkRunId}`);
 
   // Tick worker for shadow fork until complete
   console.log("      Running shadow fork to completion...");
@@ -136,14 +136,16 @@ Total: $1,250.00
   }
 
   const finishedFork = await engine.getRun(forkRunId);
-  console.log(`      ✓ Shadow fork finished with status: ${finishedFork?.status.toUpperCase()}`);
+  console.log(`      [OK] Shadow fork finished with status: ${finishedFork?.status.toUpperCase()}`);
   console.log(
-    `      ✓ Fork result amount: $${(finishedFork?.result as { invoice?: { amount?: number } })?.invoice?.amount?.toFixed(2)}`,
+    `      [OK] Fork result amount: $${(finishedFork?.result as { invoice?: { amount?: number } })?.invoice?.amount?.toFixed(2)}`,
   );
   console.log(
-    `      ✓ External charges made during shadow fork: 0 (prevented by shadow interceptor!)`,
+    `      [OK] External charges made during shadow fork: 0 (prevented by shadow interceptor!)`,
   );
-  console.log(`      ✓ Total charges in payment gateway: ${mocks.stats.charges.length} (still 0)`);
+  console.log(
+    `      [OK] Total charges in payment gateway: ${mocks.stats.charges.length} (still 0)`,
+  );
 
   // 6. Approve the original live run
   console.log("\n[4/6] Approving the original live run as Human-in-the-Loop manager...");
@@ -151,7 +153,7 @@ Total: $1,250.00
     decision: "approve",
     note: "Approved by VP Engineering under Q4 Infrastructure budget",
   });
-  console.log("      ✓ Approval submitted: APPROVED");
+  console.log("      [OK] Approval submitted: APPROVED");
 
   // Tick worker to resume and finish live run
   console.log("      Worker resuming live run...");
@@ -161,23 +163,23 @@ Total: $1,250.00
   }
 
   const completedParent = await engine.getRun(parentRunId);
-  console.log(`      ✓ Live run status: ${completedParent?.status.toUpperCase()}`);
+  console.log(`      [OK] Live run status: ${completedParent?.status.toUpperCase()}`);
   if (completedParent?.error) {
-    console.log(`      ✕ Live run error: ${completedParent.error}`);
+    console.log(`      [ERROR] Live run error: ${completedParent.error}`);
   }
   console.log(
-    `      ✓ Real payment charge ID: ${(completedParent?.result as { payment?: { chargeId?: string } })?.payment?.chargeId}`,
+    `      [OK] Real payment charge ID: ${(completedParent?.result as { payment?: { chargeId?: string } })?.payment?.chargeId}`,
   );
-  console.log(`      ✓ Total charges processed in real gateway: ${mocks.stats.charges.length}`);
+  console.log(`      [OK] Total charges processed in real gateway: ${mocks.stats.charges.length}`);
   console.log(
-    `      ✓ Total customer notifications delivered: ${mocks.stats.notifications.length}`,
+    `      [OK] Total customer notifications delivered: ${mocks.stats.notifications.length}`,
   );
 
   // 7. Verify ledger in database
   const ledgerRows = await pool.query(
     "SELECT * FROM invoice_audit_ledger WHERE invoice_number = 'INV-2026-9042'",
   );
-  console.log(`      ✓ Database audit ledger rows committed: ${ledgerRows.rowCount}`);
+  console.log(`      [OK] Database audit ledger rows committed: ${ledgerRows.rowCount}`);
 
   // 8. Next steps & UI instructions
   console.log("\n=============================================================");

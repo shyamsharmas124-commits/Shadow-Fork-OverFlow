@@ -7,7 +7,7 @@ import { migrate } from "../src/migrate.js";
  */
 export async function makePool(): Promise<pg.Pool> {
   const connectionString =
-    process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/durable";
+    process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/durable";
   const pool = new pg.Pool({ connectionString });
   await migrate(pool);
   return pool;

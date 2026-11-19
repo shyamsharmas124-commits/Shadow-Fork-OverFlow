@@ -38,7 +38,7 @@ export async function duplicateWindowWorkflow(
 async function run() {
   const workerId = process.argv[2] || process.env.WORKER_ID || `worker-${process.pid}`;
   const databaseUrl =
-    process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable";
+    process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:5432/durable";
 
   const pool = new Pool({
     connectionString: databaseUrl,

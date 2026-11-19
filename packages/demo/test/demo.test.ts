@@ -14,7 +14,7 @@ describe("Milestone 6b - Demo Workflow & Shadow Fork Walkthrough", () => {
   beforeAll(async () => {
     pool = new Pool({
       connectionString:
-        process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable",
+        process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:5432/durable",
     });
 
     await pool.query(`

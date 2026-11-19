@@ -100,7 +100,7 @@ describe("Deterministic Duplicate-Window Test (Real OS Processes & SIGKILL)", ()
           WORKER_ID: workerId,
           TEST_PAUSE_BEFORE_COMMIT: pauseBeforeCommit ? "true" : "false",
           DATABASE_URL:
-            process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable",
+            process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:5432/durable",
         },
         stdio: ["inherit", "inherit", "inherit", "ipc"],
       });

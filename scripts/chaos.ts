@@ -114,7 +114,7 @@ export async function runChaosIteration(
         ...process.env,
         WORKER_ID: workerId,
         DATABASE_URL:
-          process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable",
+          process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:5432/durable",
       },
       stdio: "ignore", // silence worker child logs for clean output
     });
@@ -271,7 +271,7 @@ async function main() {
   console.log("   DURABLE WORKFLOW ENGINE - MULTI-PROCESS WORKER CHAOS TEST (5 RUNS)");
   console.log("=========================================================================\n");
 
-  const databaseUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/durable";
+  const databaseUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@127.0.0.1:5432/durable";
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 20,
@@ -284,12 +284,12 @@ async function main() {
     const report = await runChaosIteration(pool, iter, { numWorkflows: 10, numWorkers: 3 });
     reports.push(report);
     if (report.passed) {
-      console.log(`✓ PASSED in ${(report.durationMs / 1000).toFixed(2)}s`);
+      console.log(`[PASS] in ${(report.durationMs / 1000).toFixed(2)}s`);
       console.log(`        Kill budget: ${report.workersKilled} workers killed via SIGKILL (Win32 TerminateProcess)`);
       console.log(`        Receiver raw requests: ${report.rawRequests} | Unique keys: ${report.uniqueKeys} | Duplicate network attempts: ${report.duplicateAttempts}`);
       console.log(`        Event log: 0 duplicate StepCompleted events | Contiguous seq: ${report.sequenceContiguous ? "YES" : "NO"}`);
     } else {
-      console.log(`✕ FAILED in ${(report.durationMs / 1000).toFixed(2)}s (${report.workflowsCompleted}/${report.workflowsTotal} completed)`);
+      console.log(`[FAIL] in ${(report.durationMs / 1000).toFixed(2)}s (${report.workflowsCompleted}/${report.workflowsTotal} completed)`);
     }
   }
 
@@ -331,11 +331,11 @@ async function main() {
 
   if (totalDupAttempts > 0) {
     console.log(
-      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), ${totalDupAttempts} duplicate network attempts verified carrying identical idempotency keys (${totalRaw} raw requests, ${totalUnique} unique keys), and exactly-once event log recording (0 duplicate StepCompleted events across all runs)!`,
+      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), ${totalDupAttempts} duplicate network attempts verified carrying identical idempotency keys (${totalRaw} raw requests, ${totalUnique} unique keys), and one StepCompleted per step in the event log (0 duplicate StepCompleted events across all runs)!`,
     );
   } else {
     console.log(
-      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), 0 duplicate network attempts observed (${totalRaw} raw requests, ${totalUnique} unique keys), and exactly-once event log recording (0 duplicate StepCompleted events across all runs)!`,
+      `All ${reports.length} chaos iterations passed with 100% completion (${totalCompleted}/${totalWorkflows} workflows, ${totalKilled} workers killed via SIGKILL), 0 duplicate network attempts observed (${totalRaw} raw requests, ${totalUnique} unique keys), and one StepCompleted per step in the event log (0 duplicate StepCompleted events across all runs)!`,
     );
   }
   process.exit(0);

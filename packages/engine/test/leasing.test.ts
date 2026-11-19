@@ -75,8 +75,8 @@ describe("Milestone 2 - Leasing primitives", () => {
     const engine = new Engine(pool, { [wf]: async () => 1 });
     const _runId = await engine.startRun(wf, {});
 
-    // Claim with very short lease (50ms)
-    const claimed = await claimTask(pool, "worker-reap", 50, [wf]);
+    // Claim with lease (300ms)
+    const claimed = await claimTask(pool, "worker-reap", 300, [wf]);
     expect(claimed).not.toBeNull();
 
     // Before expiry, reaper should not reap it
@@ -84,7 +84,7 @@ describe("Milestone 2 - Leasing primitives", () => {
     expect(reapedEarly).not.toContain(claimed!.id);
 
     // Wait for lease to expire
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 350));
 
     // After expiry, reaper returns it to pending
     const reaped = await reapTasks(pool, undefined, [wf]);
