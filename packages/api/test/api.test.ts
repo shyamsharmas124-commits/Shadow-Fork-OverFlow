@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Ctx, Engine, loadEvents } from "@durable/engine";
 import type pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApiApp, isLoopback, isValidHost, startServer } from "../src/index.js";
 import { makePool } from "./helpers.js";
 
@@ -764,6 +764,17 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       let liveHttpCalls = 0;
       let stepFailOnce = true;
 
+      // Stub globalThis.fetch so the live-mode parent step does not make a real
+      // network call.  The test's intent is to verify shadow-mode behaviour and
+      // that liveHttpCalls is incremented exactly once; the actual HTTP response
+      // content is not under test.  The spy is restored at the end of this test.
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ stubbed: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
       const engine = new Engine(pool, {
         [wf]: async (ctx: Ctx) => {
           await ctx.step("step-init", () => "ready", {});
@@ -834,6 +845,8 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
       const forkEvents = await loadEvents(pool, forkId);
       const effectEvents = forkEvents.filter((e) => e.type === "EffectCaptured");
       expect(effectEvents.length).toBeGreaterThanOrEqual(1);
+
+      fetchSpy.mockRestore();
     });
 
     it("resume of completed run is a safe no-op with clear response", async () => {
@@ -1334,6 +1347,76 @@ describe("Milestone 5a - packages/api HTTP Inspector Layer", () => {
 
       // Clean up tasks
       await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+    });
+
+    it("returns dynamic health telemetry (dbLatencyMs, leaseHolders60s, schemaVersion), excludes idle workers, and fails if constant", async () => {
+      const wf = `wf_health_${randomUUID().slice(0, 8)}`;
+      const engine = new Engine(pool, { [wf]: async () => ({}) });
+      const app = createApiApp({ engine, pool });
+
+      // Clean tasks
+      await pool.query("DELETE FROM tasks");
+
+      // 1. Zero tasks: returns 0
+      const res1 = await app.request("/health");
+      expect(res1.status).toBe(200);
+      const data1 = (await res1.json()) as {
+        status: string;
+        dbLatencyMs: number;
+        schemaVersion: string;
+        leaseHolders60s: number;
+      };
+
+      expect(data1.status).toBe("ok");
+      expect(typeof data1.dbLatencyMs).toBe("number");
+      expect(data1.dbLatencyMs).toBeGreaterThan(0);
+      expect(data1.leaseHolders60s).toBe(0);
+      expect(data1.schemaVersion).toMatch(/\.sql$/);
+
+      // 2. Insert tasks:
+      // - running task with valid lease (counts)
+      // - completed task with heartbeat 30 s ago (counts)
+      // - completed task with heartbeat 5 m ago (does NOT count)
+      const runId = await engine.startRun(wf, {});
+      await pool.query(
+        `INSERT INTO tasks (run_id, step_key, attempt, status, run_at, lease_owner, lease_expires_at, last_heartbeat_at)
+         VALUES 
+          -- Case 1: Running task with valid lease (counts)
+          ($1, 'step-running-valid', 1, 'running', now(), 'worker-running-valid', now() + interval '5 minutes', now()),
+          -- Case 2: Completed task with heartbeat 30s ago (counts)
+          ($1, 'step-completed-30s', 1, 'completed', now() - interval '30 seconds', 'worker-completed-30s', now() - interval '30 seconds', now() - interval '30 seconds'),
+          -- Case 3: Completed task with heartbeat 5m ago (does NOT count)
+          ($1, 'step-completed-5m', 1, 'completed', now() - interval '5 minutes', 'worker-completed-5m', now() - interval '5 minutes', now() - interval '5 minutes')`,
+        [runId],
+      );
+
+      const res2 = await app.request("/health");
+      expect(res2.status).toBe(200);
+      const data2 = (await res2.json()) as typeof data1;
+
+      // Exactly 2 workers count: worker-running-valid and worker-completed-30s
+      // worker-completed-5m is excluded
+      expect(data2.leaseHolders60s).toBe(2);
+      expect(data2.leaseHolders60s).not.toBe(data1.leaseHolders60s);
+      expect(data2.dbLatencyMs).toBeGreaterThan(0);
+
+      // Clean up tasks
+      await pool.query("DELETE FROM tasks WHERE run_id = $1", [runId]);
+    });
+
+    it("returns HTTP 503 and status degraded when database query throws", async () => {
+      const mockFailingPool = {
+        query: vi.fn().mockRejectedValue(new Error("Connection terminated unexpectedly")),
+      } as unknown as pg.Pool;
+
+      const failingApp = createApiApp({ engine: new Engine(pool), pool: mockFailingPool });
+      const res = await failingApp.request("/health");
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data).toEqual({
+        status: "degraded",
+        error: "Database check failed",
+      });
     });
   });
 });

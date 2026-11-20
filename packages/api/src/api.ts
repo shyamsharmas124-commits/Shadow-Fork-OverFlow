@@ -485,8 +485,43 @@ export function createApiApp(options: CreateApiOptions): Hono {
     );
   });
 
-  // Health check
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  // Health check: returns status, real measured database query latency, latest applied schema migration, and active worker count
+  app.get("/health", async (c) => {
+    const t0 = performance.now();
+    try {
+      const { rows: migRows } = await pool.query<{ name: string }>(
+        "SELECT name FROM _migrations ORDER BY applied_at DESC, name DESC LIMIT 1",
+      );
+      const schemaVersion = migRows[0]?.name ?? "none";
+
+      const { rows: workerRows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(DISTINCT lease_owner) as count 
+         FROM tasks 
+         WHERE lease_owner IS NOT NULL 
+           AND (
+             (status = 'running' AND lease_expires_at > NOW()) 
+             OR (last_heartbeat_at > NOW() - INTERVAL '60 seconds')
+           )`,
+      );
+      const leaseHolders60s = Number.parseInt(workerRows[0]?.count ?? "0", 10);
+      const dbLatencyMs = Math.round((performance.now() - t0) * 100) / 100;
+
+      return c.json({
+        status: "ok",
+        dbLatencyMs,
+        schemaVersion,
+        leaseHolders60s,
+      });
+    } catch {
+      return c.json(
+        {
+          status: "degraded",
+          error: "Database check failed",
+        },
+        503,
+      );
+    }
+  });
 
   // POST /runs: Trigger a registered workflow
   const StartRunSchema = z.object({
