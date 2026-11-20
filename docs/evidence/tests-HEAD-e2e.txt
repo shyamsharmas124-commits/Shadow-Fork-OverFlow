@@ -1,0 +1,22 @@
+  [chromium] › a11y-baseline.spec.ts:121:1 › A11y baseline audit: scan all views with axe
+  [chromium] › a11y-stage1.spec.ts:166:1 › A11y Stage 1 audit: scan all views in Light and Dark mode with axe
+  [chromium] › design-rules.spec.ts:187:3 › Design Rules & Strict Aesthetics Enforcement › 01. Strict Design Rules: no gradients, square tags (radius <= 2px), no purple/magenta, <= 1 accent button
+  [chromium] › design-rules.spec.ts:226:3 › Design Rules & Strict Aesthetics Enforcement › 02. Mutation check: design-rule checker detects violations when injected and fails
+  [chromium] › inspector.spec.ts:115:1 › E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptured inspection, and security
+  [chromium] › inspector.spec.ts:260:1 › E2E Fork and Diff UI: create shadow fork via UI form, inspect execution diff, verify secrets redacted, and assert parent untouched
+  [chromium] › inspector.spec.ts:397:1 › 03. Diff View displays 'Failed in Parent' badge with parent error for failed step
+  [chromium] › inspector.spec.ts:475:1 › 04. XSS Safety & In-Memory Token Isolation
+  [chromium] › inspector.spec.ts:553:1 › 05. Approval Gate UI: displays pending approval card, user approves, and workflow completes
+  [chromium] › motion.spec.ts:85:1 › 01. Accessibility: respects prefers-reduced-motion in CSS and JS (0ms transitions)
+  [chromium] › motion.spec.ts:121:1 › 02. Motion Key Moments: SVG edge animation, diff tint flash, and shared transitions
+  [chromium] › motion.spec.ts:147:1 › 03. Performance: profile FPS and heap delta during 500-event stream load
+  [chromium] › stage3-features.spec.ts:157:1 › 01. Feature 1: Replay scrubber moves playhead and reconstructs state at seq N
+  [chromium] › stage3-features.spec.ts:198:1 › 02. Feature 2: Command palette (Ctrl/Cmd+K) with run search and axe accessibility
+  [chromium] › stage3-features.spec.ts:238:1 › 03. Feature 3: Event search and multi-criteria filters on timeline
+  [chromium] › stage3-features.spec.ts:266:1 › 04. Feature 4: What would have been sent panel with secret-redacted cURL and copy button
+  [chromium] › stage3-features.spec.ts:305:1 › 05. Feature 5: Approval inbox page with parked runs, payload preview, and reject modal
+  [chromium] › stage3-features.spec.ts:346:1 › 06. Feature 6: Compare any two runs with execution diff and multi-fork lineage graph
+  [chromium] › stage3-features.spec.ts:385:1 › 07. Feature 7: Worker pool and active task lease monitoring view
+  [chromium] › stage3-features.spec.ts:418:1 › 08. Feature 8: Live updates polling control with Authorization header and backoff
+  [chromium] › stage3-features.spec.ts:460:1 › 09. Feature 9: Run trace export with SHA-256 checksum and plain permalink
+  [chromium] › stage3-features.spec.ts:497:1 › 10. Feature 10: Telemetry metrics strip with mini SVG sparklines and skeleton loaders

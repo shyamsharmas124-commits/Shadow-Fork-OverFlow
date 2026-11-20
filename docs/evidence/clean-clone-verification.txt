@@ -1,0 +1,8 @@
+Clean Clone Verification:
+1. Cloned repo to ../clean-clone-test outside workspace.
+2. Created fresh PostgreSQL database 'durable_clean_test'.
+3. Applied migrations: pnpm --filter @durable/engine migrate -> migrated successfully.
+4. Ran all unit and integration tests: pnpm test -> 178 tests passed across 4 packages (engine: 98, api: 36, demo: 3, ui: 41).
+5. Ran demo workflow: pnpm demo -> 6/6 stages completed successfully, verified real gateway charge, customer notification, and audit ledger row.
+6. Cleaned up temporary test database and clone directory.
+Timestamp: 2026-11-18T11:14:00+05:30

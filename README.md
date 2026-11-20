@@ -1,6 +1,6 @@
 # durable
 
-An industrial-grade, Postgres-backed durable workflow engine in TypeScript featuring event-sourced deterministic replay, distributed leasing with fencing tokens, human-in-the-loop approval gates, and **Shadow Forking**: branch a workflow at event sequence *N*, re-execute forward with external side effects safely captured and database writes rolled back, and inspect side-by-side diffs before executing live.
+An industrial-grade, Postgres-backed durable workflow engine in TypeScript featuring event-sourced deterministic replay, distributed leasing with fencing tokens, human-in-the-loop approval gates, and **Shadow Forking**: branch a workflow at event sequence *N*, re-execute forward with external side effects captured and database writes rolled back, and inspect side-by-side diffs before executing live.
 
 ---
 
@@ -102,8 +102,8 @@ Building reliable business processes across distributed microservices, LLM APIs,
 - When completing or failing a task, the worker verifies that its worker ID still matches `lease_owner`. If the lease expired and was claimed by another worker, the engine throws `FencingError`, preventing zombie workers from corrupting the run.
 - Worker processes autonomously call `reapTasks` on each poll cycle to recover tasks abandoned by crashed workers. Worker-side reaping is a simple per-poll approach, not tuned for scale (in high-throughput multi-worker deployments, a dedicated background reaper daemon or database scheduler is recommended to avoid redundant reap queries per poll).
 
-### 4. At-Least-Once External Delivery & Exactly-Once Event Log Recording
-- The event log records each step completion (`StepCompleted`) exactly once; external network calls are at-least-once.
+### 4. At-Least-Once External Delivery & Atomic Event Log Recording
+- The event log records each step completion (`StepCompleted`) atomically under the `(run_id, seq)` primary key constraint; external network calls are at-least-once.
 - If a worker crashes mid-task, the reaper (`reapTasks`) resets expired leases back to `pending`.
 - Every step receives an auto-generated idempotency key derived via `makeIdempotencyKey(runId, stepKey, occurrence)`:
   $$\text{idempotencyKey} = \text{runId} + ":" + \text{stepName} + ":" + \text{occurrence}$$
@@ -119,10 +119,10 @@ Building reliable business processes across distributed microservices, LLM APIs,
 - Resumed via `engine.submitApproval(runId, name, { decision: "approve" | "reject", note })` or `POST /runs/:id/approvals/:name`.
 - Submissions are row-locked and idempotent: concurrent submissions return the recorded decision.
 
-### 6. Shadow Forking & Safety Boundaries
+### 6. Shadow Forking & Isolation Boundaries
 - Workflows can be forked at sequence *N* via `engine.fork(parentRunId, atSeq, edit, options)`.
 - Copies events `1..N-1` into a new run with `mode = 'shadow'` and `parent_run_id`.
-- **Shadow SQL Safety**: Reversible database steps execute on a dedicated PostgreSQL connection wrapped in `BEGIN`, with `SET LOCAL statement_timeout = 2000` and `SET LOCAL lock_timeout = 1000`. An AST parser validates the statement using `libpg-query`, rejecting multi-statement strings, transaction control (`COMMIT`, `ROLLBACK`), and dangerous administrative functions (`pg_advisory_lock`, `set_config`). The transaction is guaranteed to `ROLLBACK` in a `finally` block on completion, error, or timeout.
+- **Shadow SQL Execution**: Reversible database steps execute on a dedicated PostgreSQL connection wrapped in `BEGIN`, with `SET LOCAL statement_timeout = 2000` and `SET LOCAL lock_timeout = 1000`. An AST parser validates the statement using `libpg-query`, rejecting multi-statement strings, transaction control (`COMMIT`, `ROLLBACK`), and dangerous administrative functions (`pg_advisory_lock`, `set_config`). The transaction is guaranteed to `ROLLBACK` in a `finally` block on completion, error, or timeout.
 - **Egress Guard**: An `AsyncLocalStorage` guard intercepts `globalThis.fetch`, `http.request`, `http.get`, `https.request`, and `https.get`, raising `ShadowEgressError` on unauthorized network calls.
 - **Side Effect Diffing**: The API derives execution diffs (`GET /runs/:id/effects`), classifying steps as `unchanged`, `modified`, `added-in-fork`, or `failed-in-parent`.
 
@@ -148,6 +148,8 @@ External effect requests captured by shadow connectors are redacted at **write-t
 
 > [!WARNING]
 > Value-pattern redaction (including `tok_`, `sk-`, `ghp_`, `AKIA`, and JWT shapes) is best-effort and may over-redact identifiers matching those patterns. Read-time redaction is best effort (field names and known credential value patterns); a secret stored under an ordinary field name (e.g. `{ "data": "supersecret" }`) can still reach API clients. The API must be treated as exposing whatever workflows store.
+
+> **cURL Exporter Verification**: Bash commands are executed and verified in sandbox tests against local HTTP counting servers. PowerShell commands (`pwsh`) are not executed in automated CI test runs because `pwsh` is not available in the test runner environment (`pwsh: not found`), and are labeled "not executed in tests".
 
 ---
 
@@ -246,7 +248,7 @@ Open **http://localhost:5173** to inspect execution runs, event timelines, appro
 | `POST` | `/runs` | Start a new workflow run | Yes (`Bearer <API_TOKEN>`) |
 | `GET` | `/runs/:id` | Get run details, event stream, and active tasks | No (on loopback) |
 | `POST` | `/runs/:id/fork` | Fork run at sequence *N* in shadow mode | Yes (`Bearer <API_TOKEN>`) |
-| `POST` | `/runs/:id/resume` | Safely resume stalled or failed runs | Yes (`Bearer <API_TOKEN>`) |
+| `POST` | `/runs/:id/resume` | Resume stalled or failed runs | Yes (`Bearer <API_TOKEN>`) |
 | `POST` | `/runs/:id/approvals/:name` | Submit human approval decision (`approve`/`reject`) | Yes (`Bearer <API_TOKEN>`) |
 | `GET` | `/runs/:id/effects` | Side-by-side diff between parent and shadow fork | No (on loopback) |
 

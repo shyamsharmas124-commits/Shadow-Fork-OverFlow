@@ -103,7 +103,7 @@ Before approving the $1,250 expense, the finance team wants to ask:
 
 ## Step 6: Multi-Process Worker Chaos Demonstration (20 seconds)
 
-To demonstrate fault tolerance, at-least-once external network attempts with idempotency keys, and exactly-once event log recording under catastrophic failure:
+To demonstrate fault tolerance, at-least-once external network attempts with idempotency keys, and atomic event log recording under catastrophic failure:
 ```bash
 # Terminal 3: Run multi-process worker chaos suite
 pnpm chaos

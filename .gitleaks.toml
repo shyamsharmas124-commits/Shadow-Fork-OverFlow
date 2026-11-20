@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "planted fake secrets used by redaction tests"
+paths = [
+  '''packages/engine/test/shadow\.test\.ts''',
+  '''packages/ui/test/security\.test\.tsx''',
+  '''packages/ui/e2e/a11y-stage1\.spec\.ts''',
+]

@@ -1,0 +1,158 @@
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 1. park/resume: workflow requests approval, parks run without tasks, and resumes to completion on approval
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 2. double approval idempotency: calling submitApproval twice appends exactly 1 event and returns 200
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 2b. concurrent approval race: two simultaneous submitApproval calls serialize via row lock and append exactly 1 event
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 3. reject path: workflow handles rejection decision properly
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 4. worker crash while parked: worker dies/reaps, run remains cleanly parked with 0 tasks picked up
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 5. replay decision: replaying an approved run from history does not park and does not re-request approval
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 6. fork decision reuse: shadow fork reuses parent's approval decision for same (name, occurrence) without waiting
+test/approval.test.ts > Milestone 6a - Approval Gate & Human-in-the-Loop > 7. fork does NOT auto-approve when parent has no recorded decision: fork parks instead
+test/duplicate-window.test.ts > Deterministic Duplicate-Window Test (Real OS Processes & SIGKILL) > gating verification: __testHookBeforeStepCommit cannot be enabled in non-test runs
+test/duplicate-window.test.ts > Deterministic Duplicate-Window Test (Real OS Processes & SIGKILL) > kills worker with SIGKILL during post-request / pre-commit window: counting server receives exactly 2 requests with identical Idempotency-Key and DB records exactly 1 StepCompleted
+test/engine.test.ts > event log > is append-only (updates and deletes are rejected)
+test/engine.test.ts > crash and resume > does not re-execute completed steps after a crash
+test/engine.test.ts > crash and resume > returns the stored outcome for an already finished run
+test/engine.test.ts > determinism > records now() and random() so replay sees the same values
+test/engine.test.ts > determinism > allows new code to continue a run whose history is a valid prefix
+test/engine.test.ts > determinism > detects a changed step order mid-history
+test/engine.test.ts > determinism > detects same step name with different input
+test/engine.test.ts > failures > records a failed step and marks the run failed
+test/engine.test.ts > concurrency > rejects two concurrent writers appending the same seq
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (a) parent events and runs row are identical before and after fork
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (b) fork with result edit: downstream step functions execute live and produce different results
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (b) fork with input edit: re-runs step at atSeq with new input and re-executes downstream live
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (b) occurrence index: input-edit fork at second occurrence replays first occurrence unchanged and runs second live
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (d) invalid atSeq, missing run, and fork of a fork lineage
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > (e) fork of a run that is still running or failed
+test/fork.test.ts > Milestone 4a - Workflow Forking without Shadow Mode > idempotency keys are unique per run and differ between parent and fork
+test/leasing.test.ts > Milestone 2 - Leasing primitives > claimTask atomically claims pending task with SKIP LOCKED
+test/leasing.test.ts > Milestone 2 - Leasing primitives > heartbeat extends lease_expires_at
+test/leasing.test.ts > Milestone 2 - Leasing primitives > reaper returns expired running tasks to pending
+test/leasing.test.ts > Milestone 2 - Leasing primitives > fencing prevents a zombie worker from completing a reassigned task
+test/leasing.test.ts > Milestone 2 - Leasing primitives > failTask respects fencing and rejects zombie worker
+test/leasing.test.ts > Milestone 2 - 3 Workers on real Postgres with mid-task kill > executes workflow across 3 workers, kills one mid-task, and every task completes exactly once in event log
+test/leasing.test.ts > Milestone 2 - 3 Workers on real Postgres with mid-task kill > a failing reap is logged with rate-limiting and does not stop the worker
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > calculates exponential backoff with full jitter within bounded ceiling
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > retry succeeds on attempt 3 with correct backoff ordering (use an injectable clock, not real sleeps)
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > retries survive a worker crash
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > an exhausted step fails the run
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > idempotency keys differ between a run and its fork-ready copy
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > pins idempotency key derivation: same run+step+occurrence gives the same key across a retry; different runs give different keys
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > occurrence-indexed idempotency keys: two occurrences get different keys; retry of occurrence 1 keeps occurrence 1's key
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > fork idempotency keys differ from parent run for matching step and occurrence
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > repeated step names in one run and in a loop receive distinct occurrence-indexed idempotency keys
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > step timeout aborts step execution and counts as a failed attempt
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > reaper reschedules task when lease expires while step is running
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > replay-with-retries: replaying from history does not re-execute step and preserves live result and valid event sequence
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > abandoned attempt: late resolution of step that ignores AbortSignal writes NO event and does not corrupt retry
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > resumes a failed run after maxAttempts exhausted: earlier steps do not re-run, failed step retries live, and events are purely append-only
+test/reliability.test.ts > Milestone 3 - Reliability: Retries, Timeouts, and Idempotency Keys > failed-run resume provides a fresh attempt budget (step fails once after resume, retries, and succeeds on attempt 2)
+test/replay.property.test.ts > crash anywhere + resume == uninterrupted run
+test/shadow.test.ts > Milestone 4b - Shadow Mode > HTTP connector: live sends request; shadow captures without sending and redacts secrets
+test/shadow.test.ts > Milestone 4b - Shadow Mode > live HTTP connector: request carries Idempotency-Key header received by server
+test/shadow.test.ts > Milestone 4b - Shadow Mode > SQL connector: shadow executes in transaction, records affected rows, and ROLLBACKs
+test/shadow.test.ts > Milestone 4b - Shadow Mode > SQL connector: step that throws mid-query leaves no open transactions (pg_stat_activity) and rolls back
+test/shadow.test.ts > Milestone 4b - Shadow Mode > step classification: pure runs normally; unclassified defaults to effectful-external
+test/shadow.test.ts > Milestone 4b - Shadow Mode > shadow mode reuses parent result keyed by (stepName, occurrenceIndex)
+test/shadow.test.ts > Milestone 4b - Shadow Mode > shadow retries capture one EffectCaptured per attempt tagged with attempt number
+test/shadow.test.ts > Milestone 4b - Shadow Mode > shadow mode is stored on the run row and cannot be disabled by accident
+test/shadow.test.ts > Milestone 4b - Shadow Mode > replay of a completed forked run does not call any connector
+test/shadow.test.ts > Milestone 4b - Shadow Mode > abandoned shadow attempt: timeout captures EffectCaptured for attempt 1, and late resolution writes no late event
+test/shadow.test.ts > Milestone 4b - Shadow Mode > parent untouched: parent runs row, all events, and all tasks are byte-identical before and after fork completion
+test/shadow.test.ts > Milestone 4b - Shadow Mode > removes mode from public ForkOptions; passing mode is rejected at runtime and typecheck
+test/shadow.test.ts > Milestone 4b - Shadow Mode > egress guard: shadow step calling raw fetch throws ShadowEgressError, 0 HTTP requests sent; live run unaffected
+test/shadow.test.ts > Milestone 4b - Shadow Mode > redaction: redacts secret values in URL query parameters and JSON or form-encoded bodies
+test/shadow.test.ts > Milestone 4b - Shadow Mode > shadow SQL safety: lock_timeout fails fast when row lock is held, and non-transactional statements are rejected
+test/shadow.test.ts > Milestone 4b - Shadow Mode > reused-result staleness: records reusedFromParent: true and inputChangedFromParent on EffectCaptured
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 2 - Shadow SQL transaction escape & client destruction > rejects $name, leaves target rows unchanged, and surfaces clear error
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 2 - Shadow SQL transaction escape & client destruction > must still work: executes parameterized UPDATE and CASE...END expressions in shadow mode
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 2 - Shadow SQL transaction escape & client destruction > destroys client via release(true): advisory locks and session SET do not leak to next pool user
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 3 - Egress guard breadth > catches named ESM imports: import { request } from 'node:http'
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 3 - Egress guard breadth > catches egress inside pure steps during shadow mode
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 3 - Egress guard breadth > verifies AsyncLocalStorage propagation across async primitives
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 4 - Redaction fails closed & value patterns > fails closed on malformed percent-encoding in URL query
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 4 - Redaction fails closed & value patterns > redacts userinfo credentials from URL
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 4 - Redaction fails closed & value patterns > redacts value-shape secrets in headers, query, path, and body
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 4 - Redaction fails closed & value patterns > write-time redaction persists redacted effect in EffectCaptured event
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 5 - Fork mocks for newly added steps > fails with clear error if new shadow step has no parent result and no mock
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 5 - Fork mocks for newly added steps > runs to completion when newly added step is mocked via fork call
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 5 - Fork mocks for newly added steps > mock takes precedence over an existing parent result
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 5 - Fork mocks for newly added steps > mock occurrence is honored across multiple calls to the same step
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4d Item 5 - Fork mocks for newly added steps > rejects name-only Record mock when step occurs more than once in parent
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > egress guard catches direct https.get in shadow mode
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > egress guard catches CommonJS require('node:http').request in shadow mode
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > does not redact Idempotency-Key headers while redacting other sensitive headers
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > redactApiOutput preserves Date instances as ISO strings and handles null/undefined
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > allowlist preserves non-secret field names (step_key, stepKey, idempotencyKey) while apiKey, secret, token, password stay redacted
+test/shadow.test.ts > Milestone 4b - Shadow Mode > M4e Egress & Idempotency Header hardening > redactApiOutput handles non-plain values: Date, bigint, Buffer, undefined, null, and nested arrays
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > limit cap on GET /runs: limit=100000 returns at most maxLimit (50)
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > invalid query returns 400 with Zod error and no stack trace
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > invalid fork body returns 400 with Zod error and no stack trace
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > GET /runs/:id returns 404 for unknown run
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > forced database error returns generic 500 with NO SQL text and no stack trace
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Conformance & Hardening > CORS: only configured origin is allowed, others get no allow header
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Timing derivation from events > derives startedAt from RunStarted, completedAt from RunCompleted, and durationMs from difference
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Timing derivation from events > derives completedAt from the last terminal event after RunResumed, not the earlier RunFailed
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Parent run untouched via API fork (byte-identical snapshot) > parent runs row, all events, and all tasks are byte-identical before and after fork through API
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants Verification > never edits or deletes events, never resets a completed step, and cannot double-run a step with StepCompleted
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 1 (runs.input): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 2 (runs.fork_edit): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 3 (StepFailed.error): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 4 (StepCompleted.input): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 5 (StepCompleted.result): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 6 (EffectCaptured.wouldHaveResult): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Secrets: One Test Per Stored Location (7 Unique Secrets) & Mutation Checks > Location 7 (EffectCaptured.request): planted secret appears in NO API response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Access Control & Host Binding > refuses to start on non-loopback host if API_TOKEN is unset
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > API Access Control & Host Binding > mutating endpoints require Authorization: Bearer <API_TOKEN> and reject missing/wrong token without side effects
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants & Concurrency > two simultaneous resume calls produce exactly 1 task & 1 execution
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants & Concurrency > shadow fork stays shadow after resume with 0 live connector calls
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants & Concurrency > resume of completed run is a safe no-op with clear response
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants & Concurrency > two concurrent resumes on a pool of size 1 succeed without deadlocking and with 0 leaked locks
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/resume Invariants & Concurrency > an aborted resume request automatically releases transaction-level advisory lock in pg_locks
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > DNS Rebinding Protection & Host Validation > isLoopback correctly validates loopback host variants and rejects non-loopback hosts
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > DNS Rebinding Protection & Host Validation > isValidHost strictly matches configured host and port, rejecting mismatched ports and non-allowlisted loopbacks
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > DNS Rebinding Protection & Host Validation > rejects requests with Host: 127.0.0.1:9999 and Host: evil.example with 403 Forbidden
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs Endpoint Hardening & Registered Workflows > rejects unregistered workflow types with 400 Bad Request and lists registered types
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs Endpoint Hardening & Registered Workflows > rejects invalid JSON or missing workflowType with 400 Zod error
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs Endpoint Hardening & Registered Workflows > accepts registered workflow type and starts run returning 201 with runId
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > Pagination & True Total Computation > computes true total count using COUNT(*) and caps page limit at maxLimit (50)
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/approvals/:name Human-in-the-Loop > submits approval, records decision event, resumes execution, and returns 200
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > POST /runs/:id/approvals/:name Human-in-the-Loop > requires Bearer token on mutating approval endpoint when API_TOKEN is configured
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > GET /workers: Worker Pool and Lease Monitoring > returns active workers, active leases, task counts, and applies read-time redaction
+test/api.test.ts > Milestone 5a - packages/api HTTP Inspector Layer > GET /workers: Worker Pool and Lease Monitoring > returns dynamic health telemetry (dbLatencyMs, activeWorkersWithRecentLease, schemaVersion), excludes idle workers, and fails if constant
+test/demo.test.ts > Milestone 6b - Demo Workflow & Shadow Fork Walkthrough > extractInvoiceFallback extracts structured fields and applies discount codes correctly
+test/demo.test.ts > Milestone 6b - Demo Workflow & Shadow Fork Walkthrough > executes the full demo story: pauses at approval, forks in shadow mode without side effects, approves original to completion
+test/demo.test.ts > Milestone 6b - Demo Workflow & Shadow Fork Walkthrough > rejecting the approval gate fails the run with the rejection note
+test/components.test.tsx > UI State Components Tests (Loading, Empty, Error, 404) > EventDetailPanel renders empty placeholder when no event is selected
+test/components.test.tsx > UI State Components Tests (Loading, Empty, Error, 404) > RunList renders empty state when 0 runs are returned
+test/components.test.tsx > UI State Components Tests (Loading, Empty, Error, 404) > RunList renders error state when API fails
+test/components.test.tsx > UI State Components Tests (Loading, Empty, Error, 404) > RunDetail renders 404 / error state when run is not found
+test/date.test.ts > formatDate unit tests > formats valid ISO date string correctly
+test/date.test.ts > formatDate unit tests > formats Date object correctly
+test/date.test.ts > formatDate unit tests > formats time-only mode correctly
+test/date.test.ts > formatDate unit tests > returns '-' for null
+test/date.test.ts > formatDate unit tests > returns '-' for undefined/missing
+test/date.test.ts > formatDate unit tests > returns '-' for empty string
+test/date.test.ts > formatDate unit tests > returns '-' for invalid date strings
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > aligns repeated step names by occurrence correctly without collision
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > renders provenance warning when inputChangedFromParent and reusedFromParent are true
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > safely escapes XSS payloads in diff without executing script or injecting DOM nodes
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > labels step as 'Failed in parent' and displays redacted parent error when step failed in parent
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > renders parent steps after fork point as 'Only in Parent'
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > renders identical runs with all steps marked 'Reused from Parent'
+test/diff.test.tsx > Milestone 5c - DiffView Unit Tests > truncates payload over 200 characters and expands on click
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > renders <img src=x onerror=alert(1)> and <script> as literal text without executing or injecting HTML nodes
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > ensures <img src=x onerror="window.__pwned=1"> does not execute and window.__pwned remains undefined
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > Feature 4: 'What would have been sent' curl command redacts all planted secrets and never exposes them
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > curl quoting handles hostile shell characters safely in bash and PowerShell
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > curl exporter hardening: handles body starting with @, url starting with -, header starting with @, and control chars
+test/security.test.tsx > Milestone 5b - UI XSS & Security Rendering > executes generated bash curl command in sandbox against local counting server with hostile values
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 1: Replay Scrubber > renders scrubber controls and computes reconstructed run state
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 2: Command Palette (Ctrl+K) > filters actions and runs, supports navigation and selection
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 3: Event Search and Filters > filters events by search query, shadow-only, failures-only, and type
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 5: Human Approval Inbox > renders approval inbox with parked approval card and payload preview
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 8: Live Polling Control > renders speed selector, status dot, and triggers change
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 8: Live Polling Control > pauses polling when document.visibilityState is hidden and resumes when visible
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Status Bar Telemetry Verification > fails if worker count or database latency is a hardcoded constant
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Status Bar Telemetry Verification > mocks two different /health responses and asserts the status bar shows both sets of values
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 9: Run Export & Plain Permalink > renders export modal with SHA-256 hash and plain fragment permalink
+test/stage3.test.tsx > Stage 3 Features Component Unit Tests > Feature 10: Skeletons & Metrics Strip > renders skeletons and metrics strip with p50, rpm, retry rate, and sparklines
