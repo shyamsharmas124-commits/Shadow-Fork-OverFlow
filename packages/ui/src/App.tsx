@@ -12,13 +12,14 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { getRun, getRuns } from "./api.js";
+import { getHealthApi, getRun, getRuns } from "./api.js";
 import { ApprovalInbox } from "./components/ApprovalInbox.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { CompareRunsModal } from "./components/CompareRunsModal.js";
 import { LivePollingControl, type PollingSpeed } from "./components/LivePollingControl.js";
 import { RunDetail } from "./components/RunDetail.js";
 import { RunList } from "./components/RunList.js";
+import { StatusBar } from "./components/StatusBar.js";
 import { ToastContainer, type ToastMessage } from "./components/Toast.js";
 import { WorkerPoolView } from "./components/WorkerPoolView.js";
 import type { RunDetail as RunDetailType, RunSummary } from "./types.js";
@@ -86,6 +87,20 @@ export function App() {
     });
   }, []);
 
+  // Track document visibility state to pause live polling when tab is hidden
+  const [isTabVisible, setIsTabVisible] = useState<boolean>(() =>
+    typeof document !== "undefined" ? document.visibilityState !== "hidden" : true,
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleVisibilityChange = () => {
+      setIsTabVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
   // Runs Query with adaptive live polling
   const {
     data: runsData,
@@ -105,7 +120,14 @@ export function App() {
         throw err;
       }
     },
-    refetchInterval: pollingSpeed === "paused" ? false : pollingSpeed + backoffMs,
+    refetchInterval: !isTabVisible || pollingSpeed === "paused" ? false : pollingSpeed + backoffMs,
+  });
+
+  // Health & System Telemetry Query
+  const { data: healthData } = useQuery({
+    queryKey: ["system-health"],
+    queryFn: getHealthApi,
+    refetchInterval: !isTabVisible || pollingSpeed === "paused" ? false : 3000,
   });
 
   const runs: RunSummary[] = runsData?.runs ?? [];
@@ -136,14 +158,9 @@ export function App() {
         targetId = hash || null;
       }
 
-      setSelectedRunId((prev) => {
-        if (prev !== targetId) {
-          startViewTransition(() => {
-            setSelectedRunId(targetId);
-            if (targetId) setCurrentView("registry");
-          });
-        }
-        return prev;
+      startViewTransition(() => {
+        setSelectedRunId(targetId);
+        if (targetId) setCurrentView("registry");
       });
     };
     window.addEventListener("hashchange", onHashChange);
@@ -256,7 +273,7 @@ export function App() {
                 className={`px-2 py-0.5 text-[11px] font-bold border transition-colors cursor-pointer ${
                   currentView === "registry" && !selectedRunId
                     ? "bg-[var(--bg-subtle)] border-[var(--ink-primary)] text-[var(--ink-primary)]"
-                    : "border-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]"
+                    : "border-transparent text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]"
                 }`}
               >
                 Runs ({runs.length})
@@ -271,7 +288,7 @@ export function App() {
                 className={`px-2 py-0.5 text-[11px] font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
                   currentView === "approvals"
                     ? "bg-[var(--bg-subtle)] border-[var(--ink-primary)] text-[var(--ink-primary)]"
-                    : "border-transparent text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]"
+                    : "border-transparent text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]"
                 }`}
               >
                 <Inbox className="w-3.5 h-3.5" />
@@ -410,39 +427,9 @@ export function App() {
         )}
       </main>
 
-      {/* Bottom Keyboard Hints Bar & Footer */}
-      <footer className="border-t border-[var(--border-hairline)] bg-[var(--bg-panel)] py-2 px-4 text-xs font-mono">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--ink-secondary)]">
-          <div className="flex items-center gap-3">
-            <span className="text-[var(--ink-muted)]">Shortcuts:</span>
-            <span>
-              <kbd className="px-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)]">
-                Ctrl+K
-              </kbd>{" "}
-              palette
-            </span>
-            <span>
-              <kbd className="px-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)]">
-                ?
-              </kbd>{" "}
-              help
-            </span>
-            <span>
-              <kbd className="px-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)]">
-                m
-              </kbd>{" "}
-              theme
-            </span>
-            <span>
-              <kbd className="px-1 border border-[var(--border-hairline)] bg-[var(--bg-subtle)]">
-                Esc
-              </kbd>{" "}
-              dismiss
-            </span>
-          </div>
-          <div>Durable Workflow Engine &bull; Instrument Panel</div>
-        </div>
-      </footer>
+      {/* Persistent Instrument Status Bar & Telemetry Footer */}
+      {/* System Status Bar */}
+      <StatusBar healthData={healthData} inMemoryToken={inMemoryToken} />
 
       {/* Feature 2: Command Palette Modal */}
       <CommandPalette

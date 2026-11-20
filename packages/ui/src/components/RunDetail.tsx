@@ -16,7 +16,6 @@ import { useState } from "react";
 import { getEffects, getRun, submitApprovalApi } from "../api.js";
 import type { RunEvent, RunSummary } from "../types.js";
 import { formatDate } from "../utils/date.js";
-import { startViewTransition } from "../utils/motion.js";
 import { Badge, ModeBadge, StatusBadge } from "./Badge.js";
 import { CliSnippetModal } from "./CliSnippetModal.js";
 import { CompareRunsModal } from "./CompareRunsModal.js";
@@ -137,7 +136,10 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
   };
 
   return (
-    <div className="flex flex-col gap-4 font-mono text-xs" data-testid="run-detail-view">
+    <div
+      className="w-full min-w-0 flex flex-col gap-4 font-mono text-xs"
+      data-testid="run-detail-view"
+    >
       {/* Top action bar */}
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-hairline)] pb-3">
         <button
@@ -187,7 +189,7 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
             Export Trace
           </button>
 
-          {/* Single Accent per screen: Paprika Fork Run Button */}
+          {/* Single Accent per screen: Paprika Fork Run Button (non-accent while ForkModal is open or awaiting approval) */}
           <button
             type="button"
             data-testid="open-fork-modal-btn"
@@ -195,7 +197,11 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
               setForkTargetEvent(activeEvent?.type === "StepCompleted" ? activeEvent : null);
               setIsForkModalOpen(true);
             }}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] border border-transparent cursor-pointer"
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1 cursor-pointer ${
+              isForkModalOpen || pendingApprovals.length > 0
+                ? "text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] border border-[var(--border-hairline)] bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)]"
+                : "bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] border border-transparent"
+            }`}
           >
             <GitFork className="w-3.5 h-3.5" />
             Fork Run
@@ -235,8 +241,8 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
           </div>
           <p className="text-[11px] text-[var(--ink-secondary)] pl-6">
             Replay with overrides: state up to seq {run.forkedFromSeq} was seeded from parent
-            history. Subsequent side-effects were intercepted and captured safely. Safe: external
-            effects mocked / isolated.
+            history. External calls from connectors are captured, not sent; other egress paths may
+            not be blocked (see README limits).
           </p>
         </div>
       )}
@@ -269,7 +275,7 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
                 data-testid={`approve-btn-${appr.name}`}
                 onClick={() => handleDecision(appr.name, "approve")}
                 disabled={isSubmittingDecision}
-                className="px-3 py-1 text-xs font-bold bg-[#1E5A36] dark:bg-[#4EAD75] text-white dark:text-[#14281D] hover:opacity-90 disabled:opacity-50 cursor-pointer border border-transparent flex items-center gap-1"
+                className="px-3 py-1 text-xs font-bold bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] disabled:opacity-50 cursor-pointer border border-transparent flex items-center gap-1"
               >
                 <Check className="w-3.5 h-3.5" /> Approve
               </button>
@@ -365,11 +371,7 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
         <button
           type="button"
           data-testid="tab-timeline"
-          onClick={() =>
-            startViewTransition(() => {
-              setActiveTab("timeline");
-            })
-          }
+          onClick={() => setActiveTab("timeline")}
           className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors ${
             activeTab === "timeline"
               ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"
@@ -382,11 +384,7 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
           <button
             type="button"
             data-testid="tab-diff"
-            onClick={() =>
-              startViewTransition(() => {
-                setActiveTab("diff");
-              })
-            }
+            onClick={() => setActiveTab("diff")}
             className={`pb-2 px-3 text-xs font-mono font-semibold border-b-2 cursor-pointer transition-colors flex items-center gap-1.5 ${
               activeTab === "diff"
                 ? "border-[var(--ink-primary)] text-[var(--ink-primary)]"
@@ -438,7 +436,7 @@ export function RunDetail({ runId, onBack, onSelectRun, allRuns = [] }: RunDetai
               Task State & Leases ({run.tasks.length})
             </h2>
             <span className="text-[10px] text-[var(--ink-muted)]">
-              Idempotency Key derived: h(run_id, step_name, occurrence_idx)
+              Idempotency Key derived: ${"{runId}"}:${"{stepName}"}:${"{occurrence}"}
             </span>
           </div>
           <div className="overflow-x-auto">

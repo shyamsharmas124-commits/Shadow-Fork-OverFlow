@@ -1,6 +1,6 @@
 import { Background, Controls, type Edge, type Node, ReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RunDetail, RunSummary } from "../types.js";
 
 interface LineageGraphProps {
@@ -10,6 +10,52 @@ interface LineageGraphProps {
 }
 
 export function LineageGraph({ run, onSelectRun, allRuns = [] }: LineageGraphProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [colorMode, setColorMode] = useState<"light" | "dark">(() => {
+    if (typeof document !== "undefined") {
+      const themeAttr = document.documentElement.getAttribute("data-theme");
+      if (themeAttr === "dark" || document.documentElement.classList.contains("dark")) {
+        return "dark";
+      }
+    }
+    return "light";
+  });
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const updateTheme = () => {
+      const themeAttr = document.documentElement.getAttribute("data-theme");
+      const isDark = themeAttr === "dark" || document.documentElement.classList.contains("dark");
+      setColorMode(isDark ? "dark" : "light");
+    };
+    updateTheme();
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+    const update = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setContainerSize({ width: rect.width, height: rect.height });
+        }
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
   const { nodes, edges } = useMemo(() => {
     const n: Node[] = [];
     const e: Edge[] = [];
@@ -209,30 +255,41 @@ export function LineageGraph({ run, onSelectRun, allRuns = [] }: LineageGraphPro
 
   return (
     <div
+      ref={containerRef}
       data-testid="lineage-graph-container"
-      className="w-full h-72 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] overflow-hidden relative"
+      className="w-full min-w-0 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] overflow-hidden relative"
+      style={{ width: "100%", height: "288px", minHeight: "288px" }}
     >
       <div className="absolute top-2 left-2 z-10 text-[10px] font-mono font-bold text-[var(--ink-secondary)] uppercase tracking-wider">
         Fork Tree &amp; Execution Lineage ({nodes.length} connected run
         {nodes.length === 1 ? "" : "s"})
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        colorMode="system"
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        nodesConnectable={false}
-        nodesDraggable={true}
-        zoomOnScroll={false}
-        panOnDrag={false}
-      >
-        <Background color="var(--border-hairline)" gap={16} size={1} />
-        <Controls
-          showInteractive={false}
-          className="!bg-[var(--bg-panel)] !border-[var(--border-hairline)] !rounded-none !shadow-none [&>button]:!bg-[var(--bg-panel)] [&>button]:!border-[var(--border-hairline)] [&>button]:!fill-[var(--ink-primary)] hover:[&>button]:!bg-[var(--bg-hover)]"
-        />
-      </ReactFlow>
+      {containerSize && containerSize.width > 0 && containerSize.height > 0 && (
+        <ReactFlow
+          key={run.id}
+          nodes={nodes}
+          edges={edges}
+          colorMode={colorMode}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesConnectable={false}
+          nodesDraggable={true}
+          zoomOnScroll={false}
+          panOnDrag={false}
+          style={{
+            width: "100%",
+            minWidth: `${containerSize.width}px`,
+            height: "100%",
+            minHeight: "288px",
+          }}
+        >
+          <Background color="var(--border-hairline)" gap={16} size={1} />
+          <Controls
+            showInteractive={false}
+            className="!bg-[var(--bg-panel)] !border-[var(--border-hairline)] !rounded-none !shadow-none [&>button]:!bg-[var(--bg-panel)] [&>button]:!border-[var(--border-hairline)] [&>button]:!fill-[var(--ink-primary)] hover:[&>button]:!bg-[var(--bg-hover)]"
+          />
+        </ReactFlow>
+      )}
     </div>
   );
 }

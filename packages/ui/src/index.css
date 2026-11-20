@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@source "../e2e";
+
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 
 @font-face {
   font-family: "JetBrains Mono";
@@ -32,8 +35,25 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk-semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
 
   /* Motion Tokens */
   --motion-micro: 120ms;
@@ -74,7 +94,7 @@
   --status-running-bg: #fef3c7;
   --status-running-border: #f59e0b;
 
-  --status-shadow-fg: #334155;
+  --status-shadow-fg: #0f172a;
   --status-shadow-bg: #f1f5f9;
   --status-shadow-border: #94a3b8;
 }
@@ -112,22 +132,30 @@
   --status-running-bg: #2c210b;
   --status-running-border: #78350f;
 
-  --status-shadow-fg: #cbd5e1;
+  --status-shadow-fg: #f8fafc;
   --status-shadow-bg: #1e293b;
   --status-shadow-border: #475569;
 }
 
 @keyframes tint-flash {
   0% {
-    background-color: var(--accent);
-    color: var(--accent-fg);
+    opacity: 0.25;
   }
   100% {
-    background-color: transparent;
+    opacity: 0;
   }
 }
 
 .animate-tint-flash {
+  position: relative;
+}
+
+.animate-tint-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: var(--ink-secondary);
   animation: tint-flash var(--motion-morph) var(--ease-out) forwards;
 }
 
@@ -138,6 +166,19 @@
   to {
     stroke-dashoffset: 0;
   }
+}
+
+@keyframes event-item-enter {
+  from {
+    opacity: 0.99;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.event-item-animated {
+  animation: event-item-enter var(--motion-subtle, 180ms) var(--ease-out) forwards;
 }
 
 .animate-edge-draw {
@@ -162,15 +203,20 @@
   *,
   ::before,
   ::after {
-    animation-duration: 0.001ms;
-    animation-iteration-count: 1;
-    transition-duration: 0.001ms;
-    scroll-behavior: auto;
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override utility-class animation and transition declarations */
+    animation-duration: 0.001ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override utility-class animation and transition declarations */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override utility-class animation and transition declarations */
+    transition-duration: 0.001ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override utility-class animation and transition declarations */
+    scroll-behavior: auto !important;
   }
   ::view-transition-group(*),
   ::view-transition-old(*),
   ::view-transition-new(*) {
-    animation: none;
+    /* biome-ignore lint/complexity/noImportantStyles: needed to override utility-class animation and transition declarations */
+    animation: none !important;
   }
 }
 
@@ -196,9 +242,10 @@
   h4,
   h5,
   h6 {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     color: var(--ink-primary);
     font-weight: 700;
+    letter-spacing: -0.015em;
   }
 
   code,

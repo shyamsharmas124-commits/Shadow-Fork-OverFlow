@@ -134,9 +134,9 @@ export function WorkerPoolView({ isOpen, onClose }: WorkerPoolViewProps) {
                 {workers.map((w) => {
                   const statusBg =
                     w.status === "active"
-                      ? "text-[#1E5A36] dark:text-[#4EAD75] border-[#1E5A36]/40"
+                      ? "text-[var(--status-completed-fg)] border-[var(--status-completed-border)] bg-[var(--status-completed-bg)]"
                       : w.status === "stale"
-                        ? "text-[#B91C1C] dark:text-[#F87171] border-[#B91C1C]/40"
+                        ? "text-[var(--status-failed-fg)] border-[var(--status-failed-border)] bg-[var(--status-failed-bg)]"
                         : "text-[var(--ink-muted)] border-[var(--border-hairline)]";
 
                   return (
@@ -242,7 +242,7 @@ export function WorkerPoolView({ isOpen, onClose }: WorkerPoolViewProps) {
                           <span
                             className={`px-1 py-0.2 text-[10px] border ${
                               l.status === "running"
-                                ? "text-[#1E5A36] dark:text-[#4EAD75] border-[#1E5A36]/40"
+                                ? "text-[var(--status-completed-fg)] border-[var(--status-completed-border)] bg-[var(--status-completed-bg)]"
                                 : "text-[var(--ink-muted)] border-[var(--border-hairline)]"
                             }`}
                           >

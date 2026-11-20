@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { startServer } from "@durable/api";
 import { type Ctx, Engine, loadEvents, migrate } from "@durable/engine";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import pg from "pg";
 import { createServer, type ViteDevServer } from "vite";
 
-const ADMIN_DB_URL = "postgres://postgres:postgres@localhost:5432/postgres";
-const E2E_DB_URL = "postgres://postgres:postgres@localhost:5432/durable_e2e";
+const ADMIN_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+const E2E_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/durable_e2e";
 
 const SECRET_HEADER_TOKEN = "sk-secret-token-planted-12345678";
 const SECRET_INPUT_DATA = "sk-input-planted-secret-88888888";
@@ -130,16 +130,15 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   expect(listBodyText).not.toContain("Invalid Date");
 
   // Screenshot 1: Run List (full page)
-  const screenshot1 = resolve(screenshotsDir, "01-run-list.png");
   const screenshot1Light = resolve(screenshotsDir, "01-run-list-light.png");
   await page.screenshot({ path: screenshot1Light, fullPage: true });
-  copyFileSync(screenshot1Light, screenshot1);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await page.screenshot({ path: resolve(screenshotsDir, "01-run-list-dark.png"), fullPage: true });
+  const screenshot1Dark = resolve(screenshotsDir, "01-run-list-dark.png");
+  await page.screenshot({ path: screenshot1Dark, fullPage: true });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
@@ -165,16 +164,15 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   expect(detailBodyText).toContain("step-initialize");
 
   // Screenshot 2: Run Detail View (full page)
-  const screenshot2 = resolve(screenshotsDir, "02-run-detail.png");
   const screenshot2Light = resolve(screenshotsDir, "02-run-detail-light.png");
   await page.screenshot({ path: screenshot2Light, fullPage: true });
-  copyFileSync(screenshot2Light, screenshot2);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await page.screenshot({ path: resolve(screenshotsDir, "02-run-detail-dark.png"), fullPage: true });
+  const screenshot2Dark = resolve(screenshotsDir, "02-run-detail-dark.png");
+  await page.screenshot({ path: screenshot2Dark, fullPage: true });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
@@ -183,16 +181,47 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   // 3. Lineage Graph Screenshot (element screenshot of graph only)
   const lineageContainer = page.locator('[data-testid="lineage-graph-container"]');
   await expect(lineageContainer).toBeVisible();
-  const screenshot3 = resolve(screenshotsDir, "03-lineage-graph.png");
+
+  // Assert lineage container has non-zero width and height
+  const lineageBox = await lineageContainer.boundingBox();
+  expect(lineageBox).not.toBeNull();
+  expect(lineageBox!.width).toBeGreaterThan(0);
+  expect(lineageBox!.height).toBeGreaterThan(0);
+
+  // Assert React Flow colorMode follows app theme toggle in both directions
+  const rf = page.locator(".react-flow");
+  await expect(rf).toBeVisible();
+  const rfBox = await rf.boundingBox();
+  expect(rfBox).not.toBeNull();
+  expect(rfBox!.width).toBeGreaterThan(0);
+  expect(rfBox!.height).toBeGreaterThan(0);
+
+  const themeToggle = page.locator('[data-testid="theme-toggle-btn"]');
+  const isDarkInitial = await page.evaluate(() =>
+    document.documentElement.classList.contains("dark"),
+  );
+  if (isDarkInitial) {
+    await themeToggle.click();
+  }
+  await expect(rf).toHaveClass(/(^|\s)light(\s|$)/);
+
+  // Toggle light -> dark via app button
+  await themeToggle.click();
+  await expect(rf).toHaveClass(/(^|\s)dark(\s|$)/);
+
+  // Toggle dark -> light via app button
+  await themeToggle.click();
+  await expect(rf).toHaveClass(/(^|\s)light(\s|$)/);
+
   const screenshot3Light = resolve(screenshotsDir, "03-lineage-graph-light.png");
   await lineageContainer.screenshot({ path: screenshot3Light });
-  copyFileSync(screenshot3Light, screenshot3);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await lineageContainer.screenshot({ path: resolve(screenshotsDir, "03-lineage-graph-dark.png") });
+  const screenshot3Dark = resolve(screenshotsDir, "03-lineage-graph-dark.png");
+  await lineageContainer.screenshot({ path: screenshot3Dark });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
@@ -212,34 +241,41 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
   await expect(payloadPanel).toContainText("Seq 2");
 
   // Screenshot 4: EffectCaptured Event Detail (element screenshot of panel only)
-  const screenshot4 = resolve(screenshotsDir, "04-effect-captured-detail.png");
   const screenshot4Light = resolve(screenshotsDir, "04-effect-captured-detail-light.png");
   await payloadPanel.screenshot({ path: screenshot4Light });
-  copyFileSync(screenshot4Light, screenshot4);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await payloadPanel.screenshot({ path: resolve(screenshotsDir, "04-effect-captured-detail-dark.png") });
+  const screenshot4Dark = resolve(screenshotsDir, "04-effect-captured-detail-dark.png");
+  await payloadPanel.screenshot({ path: screenshot4Dark });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
   });
 
-  // 5. Assert all 4 screenshot files exist and have distinct byte sizes
-  const s1Size = statSync(screenshot1).size;
-  const s2Size = statSync(screenshot2).size;
-  const s3Size = statSync(screenshot3).size;
-  const s4Size = statSync(screenshot4).size;
+  // 5. Assert all screenshot files exist and have distinct byte sizes
+  const s1LightSize = statSync(screenshot1Light).size;
+  const s1DarkSize = statSync(screenshot1Dark).size;
+  const s2LightSize = statSync(screenshot2Light).size;
+  const s2DarkSize = statSync(screenshot2Dark).size;
+  const s3LightSize = statSync(screenshot3Light).size;
+  const s3DarkSize = statSync(screenshot3Dark).size;
+  const s4LightSize = statSync(screenshot4Light).size;
+  const s4DarkSize = statSync(screenshot4Dark).size;
 
-  expect(s1Size).toBeGreaterThan(0);
-  expect(s2Size).toBeGreaterThan(0);
-  expect(s3Size).toBeGreaterThan(0);
-  expect(s4Size).toBeGreaterThan(0);
+  expect(s1LightSize).toBeGreaterThan(0);
+  expect(s1DarkSize).toBeGreaterThan(0);
+  expect(s2LightSize).toBeGreaterThan(0);
+  expect(s2DarkSize).toBeGreaterThan(0);
+  expect(s3LightSize).toBeGreaterThan(0);
+  expect(s3DarkSize).toBeGreaterThan(0);
+  expect(s4LightSize).toBeGreaterThan(0);
+  expect(s4DarkSize).toBeGreaterThan(0);
 
-  // All 4 sizes must differ because they capture distinct views/elements
-  const distinctSizes = new Set([s1Size, s2Size, s3Size, s4Size]);
+  // All view screenshot sizes must differ because they capture distinct views/elements
+  const distinctSizes = new Set([s1LightSize, s2LightSize, s3LightSize, s4LightSize]);
   expect(distinctSizes.size).toBe(4);
 
   // 6. Security & Secret Redaction: Assert planted secrets DO NOT appear anywhere in the DOM
@@ -256,9 +292,6 @@ test("E2E Inspector Dashboard: run list, run detail, lineage graph, EffectCaptur
 test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution diff, verify secrets redacted, and assert parent untouched", async ({
   page,
 }) => {
-  page.on("console", (msg) => console.log("PAGE LOG:", msg.text()));
-  page.on("pageerror", (err) => console.log("PAGE ERROR:", err));
-
   // 1. Snapshot Parent Run before fork in Postgres
   const { rows: parentBeforeRuns } = await pool.query("SELECT * FROM runs WHERE id = $1", [
     parentRunId,
@@ -275,6 +308,14 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   const parentRow = page.locator(`[data-testid="run-row-${parentRunId}"]`);
   await parentRow.click();
   await page.waitForSelector('[data-testid="run-detail-view"]');
+
+  // Assert lineage container has non-zero width and height on parent run detail
+  const parentLineageContainer = page.locator('[data-testid="lineage-graph-container"]');
+  await expect(parentLineageContainer).toBeVisible();
+  const parentLineageBox = await parentLineageContainer.boundingBox();
+  expect(parentLineageBox).not.toBeNull();
+  expect(parentLineageBox!.width).toBeGreaterThan(0);
+  expect(parentLineageBox!.height).toBeGreaterThan(0);
 
   // 3. Open Fork Modal from UI
   const forkButton = page.locator('[data-testid="open-fork-modal-btn"]');
@@ -328,6 +369,14 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   await page.waitForSelector('[data-testid="run-detail-view"]');
   await expect(page.locator("h1")).not.toContainText(parentRunId);
 
+  // Assert lineage graph has non-zero size on fork run detail
+  const forkLineage = page.locator('[data-testid="lineage-graph-container"]');
+  await expect(forkLineage).toBeVisible();
+  const forkLineageBox = await forkLineage.boundingBox();
+  expect(forkLineageBox).not.toBeNull();
+  expect(forkLineageBox!.width).toBeGreaterThan(0);
+  expect(forkLineageBox!.height).toBeGreaterThan(0);
+
   // Verify on the fork run page
   const forkH1 = await page.locator("h1").innerText();
   expect(forkH1).not.toBe(parentRunId);
@@ -353,21 +402,21 @@ test("E2E Fork and Diff UI: create shadow fork via UI form, inspect execution di
   await expect(initStepDiff).toContainText("Modified / Edited");
 
   // Screenshot 5: Fork & Execution Diff View
-  const screenshot5 = resolve(screenshotsDir, "05-fork-and-diff-view.png");
   const screenshot5Light = resolve(screenshotsDir, "05-fork-and-diff-view-light.png");
   await page.screenshot({ path: screenshot5Light, fullPage: true });
-  copyFileSync(screenshot5Light, screenshot5);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await page.screenshot({ path: resolve(screenshotsDir, "05-fork-and-diff-view-dark.png"), fullPage: true });
+  const screenshot5Dark = resolve(screenshotsDir, "05-fork-and-diff-view-dark.png");
+  await page.screenshot({ path: screenshot5Dark, fullPage: true });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
   });
-  expect(statSync(screenshot5).size).toBeGreaterThan(0);
+  expect(statSync(screenshot5Light).size).toBeGreaterThan(0);
+  expect(statSync(screenshot5Dark).size).toBeGreaterThan(0);
 
   // 10. Security & Secret Redaction: Assert planted secrets are NOT in the DOM
   const domText = await page.locator("body").innerText();
@@ -423,6 +472,14 @@ test("03. Diff View displays 'Failed in Parent' badge with parent error for fail
   await page.goto(`http://localhost:5173/#${forkWithMockId}`);
   await page.waitForSelector('[data-testid="run-detail-view"]');
 
+  // Assert lineage graph has non-zero size
+  const forkFailLineage = page.locator('[data-testid="lineage-graph-container"]');
+  await expect(forkFailLineage).toBeVisible();
+  const forkFailBox = await forkFailLineage.boundingBox();
+  expect(forkFailBox).not.toBeNull();
+  expect(forkFailBox!.width).toBeGreaterThan(0);
+  expect(forkFailBox!.height).toBeGreaterThan(0);
+
   // 4. Click Diff Tab
   const diffTab = page.locator('[data-testid="tab-diff"]');
   await expect(diffTab).toBeVisible();
@@ -451,21 +508,21 @@ test("03. Diff View displays 'Failed in Parent' badge with parent error for fail
   await expect(chargeStepCard).toContainText("mock");
 
   // Screenshot 6: Failed in Parent Diff View
-  const screenshot6 = resolve(screenshotsDir, "06-failed-in-parent-diff.png");
   const screenshot6Light = resolve(screenshotsDir, "06-failed-in-parent-diff-light.png");
   await page.screenshot({ path: screenshot6Light, fullPage: true });
-  copyFileSync(screenshot6Light, screenshot6);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await page.screenshot({ path: resolve(screenshotsDir, "06-failed-in-parent-diff-dark.png"), fullPage: true });
+  const screenshot6Dark = resolve(screenshotsDir, "06-failed-in-parent-diff-dark.png");
+  await page.screenshot({ path: screenshot6Dark, fullPage: true });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
   });
-  expect(statSync(screenshot6).size).toBeGreaterThan(0);
+  expect(statSync(screenshot6Light).size).toBeGreaterThan(0);
+  expect(statSync(screenshot6Dark).size).toBeGreaterThan(0);
 });
 
 test("04. XSS Safety & In-Memory Token Isolation", async ({ page }) => {
@@ -581,21 +638,21 @@ test("05. Approval Gate UI: displays pending approval card, user approves, and w
   await expect(approvalCard).toContainText('"riskLevel": "medium"');
 
   // Screenshot 7: Pending Approval Gate
-  const screenshot7 = resolve(screenshotsDir, "07-approval-gate.png");
   const screenshot7Light = resolve(screenshotsDir, "07-approval-gate-light.png");
   await page.screenshot({ path: screenshot7Light, fullPage: true });
-  copyFileSync(screenshot7Light, screenshot7);
   await page.evaluate(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
   });
   await page.waitForTimeout(50);
-  await page.screenshot({ path: resolve(screenshotsDir, "07-approval-gate-dark.png"), fullPage: true });
+  const screenshot7Dark = resolve(screenshotsDir, "07-approval-gate-dark.png");
+  await page.screenshot({ path: screenshot7Dark, fullPage: true });
   await page.evaluate(() => {
     document.documentElement.classList.remove("dark");
     document.documentElement.setAttribute("data-theme", "light");
   });
-  expect(statSync(screenshot7).size).toBeGreaterThan(0);
+  expect(statSync(screenshot7Light).size).toBeGreaterThan(0);
+  expect(statSync(screenshot7Dark).size).toBeGreaterThan(0);
 
   // 4. Click Approve button
   const approveBtn = page.locator('[data-testid="approve-btn-finance-director"]');

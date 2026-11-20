@@ -151,8 +151,8 @@ export function ForkModal({ run, initialEvent, isOpen, onClose, onForkSuccess }:
           <div className="p-2.5 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-[var(--ink-secondary)] flex items-start gap-2">
             <GitFork className="w-4 h-4 shrink-0 mt-0.5 text-[var(--ink-primary)]" />
             <span>
-              Forks run strictly in <strong>shadow mode</strong>. Side-effectful steps (HTTP/SQL)
-              are intercepted with zero live mutations (Safe: external effects mocked / isolated).
+              Forks run in <strong>shadow mode</strong>. External calls from connectors are
+              captured, not sent; other egress paths may not be blocked (see README limits).
             </span>
           </div>
 
@@ -197,7 +197,7 @@ export function ForkModal({ run, initialEvent, isOpen, onClose, onForkSuccess }:
                   type="button"
                   data-testid="navigate-to-fork-btn"
                   onClick={() => onForkSuccess(forkResult.forkRunId)}
-                  className="px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] font-semibold cursor-pointer border border-transparent text-xs"
+                  className="px-3 py-1.5 bg-[var(--bg-subtle)] hover:bg-[var(--bg-hover)] text-[var(--ink-primary)] font-semibold cursor-pointer border border-[var(--border-hairline)] text-xs"
                 >
                   Inspect Shadow Fork
                 </button>
@@ -345,7 +345,7 @@ export function ForkModal({ run, initialEvent, isOpen, onClose, onForkSuccess }:
                   type="submit"
                   disabled={isSubmitting}
                   data-testid="submit-fork-btn"
-                  className="px-3.5 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-fg)] font-semibold cursor-pointer border border-transparent flex items-center gap-1.5 text-xs"
+                  className="px-3.5 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] font-semibold cursor-pointer border border-transparent flex items-center gap-1.5 text-xs disabled:opacity-50"
                 >
                   <GitFork className="w-3.5 h-3.5" />
                   {isSubmitting ? "Creating..." : "Execute Shadow Fork"}

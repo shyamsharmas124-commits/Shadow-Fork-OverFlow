@@ -3,12 +3,12 @@ import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { startServer } from "@durable/api";
 import { type Ctx, Engine, migrate } from "@durable/engine";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import pg from "pg";
 import { createServer, type ViteDevServer } from "vite";
 
-const ADMIN_DB_URL = "postgres://postgres:postgres@localhost:5432/postgres";
-const MOTION_DB_URL = "postgres://postgres:postgres@localhost:5432/durable_motion";
+const ADMIN_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+const MOTION_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/durable_motion";
 
 let pool: pg.Pool;
 let engine: Engine;
@@ -16,6 +16,7 @@ let apiServer: Server;
 let viteServer: ViteDevServer;
 let parentRunId: string;
 let shadowForkId: string;
+let benchRunId: string;
 
 test.beforeAll(async () => {
   const adminClient = new pg.Client({ connectionString: ADMIN_DB_URL });
@@ -28,6 +29,7 @@ test.beforeAll(async () => {
   await migrate(pool);
 
   const wfName = `wf_motion_${randomUUID().slice(0, 8)}`;
+  const benchWfName = `wf_bench_${randomUUID().slice(0, 8)}`;
   engine = new Engine(pool, {
     [wfName]: async (ctx: Ctx) => {
       await ctx.step("step-init", () => "ready", {});
@@ -41,6 +43,12 @@ test.beforeAll(async () => {
           mock: { status: 200, mockData: "motion-test" },
         },
       );
+    },
+    [benchWfName]: async (ctx: Ctx) => {
+      for (let i = 0; i < 498; i++) {
+        await ctx.step(`step-${i}`, () => ({ n: i }), {});
+      }
+      return { total: 498 };
     },
   });
 
@@ -59,6 +67,16 @@ test.beforeAll(async () => {
     port: 3000,
     host: "127.0.0.1",
   }) as unknown as Server;
+
+  // Seed a run with 500 real events via the API
+  const benchRes = await fetch("http://127.0.0.1:3000/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflowType: benchWfName, input: { benchmark: true } }),
+  });
+  const benchJson = (await benchRes.json()) as { runId: string };
+  benchRunId = benchJson.runId;
+  await engine.execute(benchRunId);
 
   viteServer = await createServer({
     root: resolve(process.cwd()),
@@ -107,15 +125,34 @@ test("01. Accessibility: respects prefers-reduced-motion in CSS and JS (0ms tran
   // Must be 0.001ms, 0s, 1e-06s, or 0.000001s
   expect(["0s", "0.000001s", "0.001ms", "1e-05s", "1e-06s"]).toContain(animationDuration);
 
-  // Navigate to Diff Tab and ensure transition completes instantly in 0ms without hanging
-  const startTime = Date.now();
+  // Under reduce: inject a div with inline animation: x 1s infinite and assert animationIterationCount is overridden to "1"
+  await page.evaluate(() => {
+    const div = document.createElement("div");
+    div.id = "test-infinite-animation";
+    div.style.animation = "x 1s infinite";
+    document.body.appendChild(div);
+  });
+  const iterationCount = await page
+    .locator("#test-infinite-animation")
+    .evaluate((el) => window.getComputedStyle(el).animationIterationCount);
+  expect(iterationCount).toBe("1");
+  await page.evaluate(() => document.getElementById("test-infinite-animation")?.remove());
+
+  // Assert computed animationDuration > 0 when switched to reducedMotion: "no-preference"
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const noPrefDuration = await timelineItem.evaluate((el) => {
+    return window.getComputedStyle(el).animationDuration;
+  });
+  console.log(`Test 01 timeline item animationDuration (no-preference): ${noPrefDuration}`);
+  expect(parseFloat(noPrefDuration)).toBeGreaterThan(0);
+
+  // Switch back to reducedMotion: "reduce"
+  await page.emulateMedia({ reducedMotion: "reduce" });
+
+  // Navigate to Diff Tab and verify diff view renders cleanly under reduced motion
   const diffTab = page.locator('[data-testid="tab-diff"]');
   await diffTab.click();
   await page.waitForSelector('[data-testid="diff-view"]');
-  const elapsed = Date.now() - startTime;
-
-  // View transition completed immediately (well within 100ms)
-  expect(elapsed).toBeLessThan(150);
 });
 
 test("02. Motion Key Moments: SVG edge animation, diff tint flash, and shared transitions", async ({
@@ -127,129 +164,134 @@ test("02. Motion Key Moments: SVG edge animation, diff tint flash, and shared tr
   await page.goto(`http://localhost:5173/#${shadowForkId}`);
   await page.waitForSelector('[data-testid="run-detail-view"]');
 
+  // Verify prefers-reduced-motion media query matches false
+  const matchesReduced = await page.evaluate(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  expect(matchesReduced).toBe(false);
+
+  // Assert timeline item animation duration > 0 with reducedMotion: "no-preference"
+  const timelineItem = page.locator('[data-testid^="event-item-"]').first();
+  await expect(timelineItem).toBeVisible();
+  const itemAnimDuration = await timelineItem.evaluate((el) => {
+    return window.getComputedStyle(el).animationDuration;
+  });
+  console.log(`Timeline item animationDuration (no-preference): ${itemAnimDuration}`);
+  expect(parseFloat(itemAnimDuration)).toBeGreaterThan(0);
+
   // 1. Lineage Graph: SVG edge has animate-edge-draw
-  const animatedEdge = page.locator(".animate-edge-draw");
-  await expect(animatedEdge.first()).toBeVisible();
+  const animatedEdge = page.locator(".animate-edge-draw").first();
+  await expect(animatedEdge).toBeVisible();
+  const edgeDuration = await animatedEdge.evaluate((el) => {
+    return window.getComputedStyle(el).animationDuration;
+  });
+  console.log(`Animated edge duration (no-preference): ${edgeDuration}`);
+  expect(parseFloat(edgeDuration)).toBeGreaterThan(0);
 
   // 2. Diff Tab: modified item has animate-tint-flash
   const diffTab = page.locator('[data-testid="tab-diff"]');
   await diffTab.click();
   await page.waitForSelector('[data-testid="diff-view"]');
 
-  const tintFlashedItem = page.locator(".animate-tint-flash");
-  await expect(tintFlashedItem.first()).toBeVisible();
+  const tintFlashedItem = page.locator(".animate-tint-flash").first();
+  await expect(tintFlashedItem).toBeVisible();
+  const tintDuration = await tintFlashedItem.evaluate((el) => {
+    return window.getComputedStyle(el, "::after").animationDuration;
+  });
+  console.log(`Tint flash duration (no-preference): ${tintDuration}`);
+  expect(parseFloat(tintDuration)).toBeGreaterThan(0);
 
   // 3. Shared Element Transition: Run ID heading has view-transition-run-id
   const runIdHeading = page.locator("h1.view-transition-run-id");
   await expect(runIdHeading).toBeVisible();
 });
 
-test("03. Performance: profile FPS and heap delta during 500-event stream load", async ({
+test("03. Performance: profile long tasks and frame gap during 500-event stream load (1x and 4x CPU throttle)", async ({
   page,
 }) => {
-  await page.goto(`http://localhost:5173/#${shadowForkId}`);
-  await page.waitForSelector('[data-testid="run-detail-view"]');
+  test.setTimeout(60000);
+  // Helper to load actual RunDetail with 500 events and profile performance
+  async function measureRunDetailPerformance(throttleRate: number) {
+    const context = page.context();
+    const benchPage = await context.newPage();
+    await benchPage.emulateMedia({ reducedMotion: "no-preference" });
 
-  // Profile FPS and heap memory while mounting 500 events
-  const metrics = await page.evaluate(async () => {
-    // Collect baseline memory
-    const perf = window.performance as unknown as {
-      memory?: { usedJSHeapSize: number };
-    };
-    const heapBefore = perf.memory ? perf.memory.usedJSHeapSize : 0;
+    if (throttleRate > 1) {
+      const client = await benchPage.context().newCDPSession(benchPage);
+      await client.send("Emulation.setCPUThrottlingRate", { rate: throttleRate });
+    }
 
-    // Generate 500 synthetic timeline events
-    const syntheticEvents = Array.from({ length: 500 }, (_, i) => ({
-      seq: i + 1,
-      type: i % 2 === 0 ? "StepCompleted" : "StepStarted",
-      payload: { name: `step-${i}`, input: { index: i }, result: `res-${i}` },
-      createdAt: new Date().toISOString(),
-    }));
-
-    // Setup RAF FPS tracker
-    let frameCount = 0;
-    let minFps = 60;
-    let lastTime = performance.now();
-    let tracking = true;
-
-    function countFrames(now: number) {
-      const delta = now - lastTime;
-      if (delta >= 1000) {
-        const currentFps = (frameCount * 1000) / delta;
-        if (currentFps < minFps && currentFps > 0) minFps = currentFps;
-        frameCount = 0;
+    await benchPage.addInitScript(() => {
+      (window as unknown as { __perfMetrics: { longTaskCount: number; maxFrameGapMs: number } }).__perfMetrics = {
+        longTaskCount: 0,
+        maxFrameGapMs: 0,
+      };
+      let lastTime = performance.now();
+      let tracking = true;
+      function track(now: number) {
+        const gap = now - lastTime;
+        const metrics = (window as unknown as { __perfMetrics: { longTaskCount: number; maxFrameGapMs: number } }).__perfMetrics;
+        if (gap > metrics.maxFrameGapMs) {
+          metrics.maxFrameGapMs = gap;
+        }
         lastTime = now;
-      } else {
-        frameCount++;
+        if (tracking) {
+          requestAnimationFrame(track);
+        }
       }
-      if (tracking) requestAnimationFrame(countFrames);
-    }
-    requestAnimationFrame(countFrames);
+      requestAnimationFrame(track);
+      try {
+        const obs = new PerformanceObserver((list) => {
+          (window as unknown as { __perfMetrics: { longTaskCount: number; maxFrameGapMs: number } }).__perfMetrics.longTaskCount += list.getEntries().length;
+        });
+        obs.observe({ entryTypes: ["longtask"] });
+      } catch {}
+    });
 
-    // Mount 500 events inside the DOM container
-    const container = document.querySelector('[data-testid="run-detail-view"]');
-    const benchContainer = document.createElement("div");
-    benchContainer.id = "bench-500-events";
-    benchContainer.style.maxHeight = "400px";
-    benchContainer.style.overflowY = "auto";
+    await benchPage.goto(`http://localhost:5173/#${benchRunId}`);
+    await benchPage.waitForSelector('[data-testid="run-detail-view"]');
+    // Wait until event 500 is rendered in DOM
+    await benchPage.waitForSelector('[data-testid="event-item-500"]', { timeout: 30000 });
 
-    const startTime = performance.now();
-    for (const ev of syntheticEvents) {
-      const row = document.createElement("div");
-      row.className =
-        "p-2 border border-[var(--border-hairline)] bg-[var(--bg-panel)] flex items-center justify-between text-xs font-mono";
-      const s1 = document.createElement("span");
-      s1.className = "tabular-nums";
-      s1.textContent = `#${ev.seq}`;
-      const s2 = document.createElement("span");
-      s2.textContent = ev.type;
-      const s3 = document.createElement("span");
-      s3.textContent = ev.payload.name;
-      row.appendChild(s1);
-      row.appendChild(s2);
-      row.appendChild(s3);
-      benchContainer.appendChild(row);
-    }
-    container?.appendChild(benchContainer);
+    // Assert computed animationDuration > 0 on timeline item with no-preference
+    const item = benchPage.locator('[data-testid="event-item-500"]');
+    await expect(item).toBeVisible();
+    const durationStr = await item.evaluate((el) => window.getComputedStyle(el).animationDuration);
+    console.log(`Test 03 timeline item animationDuration (no-preference, rate=${throttleRate}x): ${durationStr}`);
+    expect(parseFloat(durationStr)).toBeGreaterThan(0);
 
-    // Let 60 frames render to measure sustained FPS
-    await new Promise((resolve) => {
+    // Allow 30 frames to settle
+    await benchPage.evaluate(() => new Promise((resolve) => {
       let frames = 0;
       function wait() {
         frames++;
-        if (frames >= 60) resolve(true);
+        if (frames >= 30) resolve(true);
         else requestAnimationFrame(wait);
       }
       requestAnimationFrame(wait);
+    }));
+
+    const metrics = await benchPage.evaluate(() => {
+      return (window as unknown as { __perfMetrics: { longTaskCount: number; maxFrameGapMs: number } }).__perfMetrics;
     });
 
-    tracking = false;
-    const endTime = performance.now();
-    const durationSec = (endTime - startTime) / 1000;
-    const avgFps = 60 / Math.max(durationSec, 0.001);
+    await benchPage.close();
+    return metrics;
+  }
 
-    const heapAfter = perf.memory ? perf.memory.usedJSHeapSize : 0;
-    const heapDeltaMB = perf.memory
-      ? (heapAfter - heapBefore) / (1024 * 1024)
-      : 0;
+  // 1. Normal run (1x)
+  const normalMetrics = await measureRunDetailPerformance(1);
+  console.log("500-Event Stream Load Performance Benchmark (1x):");
+  console.log(`- Long-task count: ${normalMetrics.longTaskCount}`);
+  console.log(`- Max frame gap: ${normalMetrics.maxFrameGapMs.toFixed(2)}ms`);
+  expect(normalMetrics.longTaskCount).toBeLessThanOrEqual(5);
+  expect(normalMetrics.maxFrameGapMs).toBeLessThan(400);
 
-    return {
-      eventCount: 500,
-      renderDurationMs: endTime - startTime,
-      avgFps: Math.min(avgFps, 60),
-      minFps: Math.min(Math.max(minFps, 55), 60),
-      heapDeltaMB: Math.max(0, heapDeltaMB),
-    };
-  });
-
-  console.log("500-Event Stream Load Performance Benchmark:");
-  console.log(`- Event Count: ${metrics.eventCount}`);
-  console.log(`- Render Duration: ${metrics.renderDurationMs.toFixed(1)}ms`);
-  console.log(`- Average FPS: ${metrics.avgFps.toFixed(1)} FPS`);
-  console.log(`- Min FPS: ${metrics.minFps.toFixed(1)} FPS`);
-  console.log(`- Heap Delta: ${metrics.heapDeltaMB.toFixed(2)} MB`);
-
-  // Assertions: must hold 60 FPS target (>= 55 FPS) and not leak memory
-  expect(metrics.avgFps).toBeGreaterThanOrEqual(55);
-  expect(metrics.minFps).toBeGreaterThanOrEqual(50);
+  // 2. 4x CPU-throttle run via Chrome DevTools Protocol
+  const throttledMetrics = await measureRunDetailPerformance(4);
+  console.log("500-Event Stream Load Performance Benchmark (4x CPU throttle):");
+  console.log(`- Long-task count: ${throttledMetrics.longTaskCount}`);
+  console.log(`- Max frame gap: ${throttledMetrics.maxFrameGapMs.toFixed(2)}ms`);
+  expect(throttledMetrics.longTaskCount).toBeLessThanOrEqual(20);
+  expect(throttledMetrics.maxFrameGapMs).toBeLessThan(2500);
 });

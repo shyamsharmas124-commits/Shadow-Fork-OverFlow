@@ -108,3 +108,18 @@ export async function getWorkersApi(): Promise<WorkersResponse> {
   }
   return res.json();
 }
+
+export interface HealthResponse {
+  status: string;
+  dbLatencyMs: number;
+  schemaVersion: string;
+  leaseHolders60s: number;
+}
+
+export async function getHealthApi(): Promise<HealthResponse> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) {
+    throw new Error(`Health check failed: ${res.statusText}`);
+  }
+  return res.json();
+}

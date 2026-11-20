@@ -202,7 +202,7 @@ export function ApprovalInbox({
                   data-testid="reject-gate-btn"
                   onClick={() => setRejectingApproval(appr)}
                   disabled={isSubmitting}
-                  className="flex items-center gap-1 px-3 py-1.5 border border-[#B91C1C] text-[#B91C1C] dark:text-[#F87171] hover:bg-[#B91C1C]/10 cursor-pointer disabled:opacity-50 text-xs font-bold"
+                  className="flex items-center gap-1 px-3 py-1.5 border border-[var(--status-failed-border)] text-[var(--status-failed-fg)] bg-[var(--status-failed-bg)] hover:opacity-90 cursor-pointer disabled:opacity-50 text-xs font-bold"
                 >
                   <XCircle className="w-3.5 h-3.5" />
                   Reject Gate
@@ -212,7 +212,7 @@ export function ApprovalInbox({
                   data-testid="approve-gate-btn"
                   onClick={() => handleApprove(appr)}
                   disabled={isSubmitting}
-                  className="flex items-center gap-1 px-3 py-1.5 border border-[#1E5A36] text-[#1E5A36] dark:text-[#4EAD75] hover:bg-[#1E5A36]/10 cursor-pointer disabled:opacity-50 text-xs font-bold"
+                  className="flex items-center gap-1 px-3 py-1.5 border border-[var(--status-completed-border)] text-[var(--status-completed-fg)] bg-[var(--status-completed-bg)] hover:opacity-90 cursor-pointer disabled:opacity-50 text-xs font-bold"
                 >
                   <Check className="w-3.5 h-3.5" />
                   Authorize & Resume

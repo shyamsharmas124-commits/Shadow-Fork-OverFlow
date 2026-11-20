@@ -5,12 +5,12 @@ import { resolve } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { startServer } from "@durable/api";
 import { type Ctx, Engine, migrate } from "@durable/engine";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import pg from "pg";
 import { createServer, type ViteDevServer } from "vite";
 
-const ADMIN_DB_URL = "postgres://postgres:postgres@localhost:5432/postgres";
-const STAGE3_DB_URL = "postgres://postgres:postgres@localhost:5432/durable_stage3";
+const ADMIN_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+const STAGE3_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/durable_stage3";
 
 const PLANTED_SECRET_HEADER = "sk-secret-token-planted-12345678";
 const PLANTED_SECRET_QUERY = "tok_query_secret_99999999";
@@ -371,6 +371,14 @@ test("06. Feature 6: Compare any two runs with execution diff and multi-fork lin
   const diffView = compareModal.locator('[data-testid="diff-view"]');
   await expect(diffView).toBeVisible();
 
+  // Assert lineage graph container has non-zero width and height in Compare view
+  const compareLineage = compareModal.locator('[data-testid="lineage-graph-container"]');
+  await expect(compareLineage).toBeVisible();
+  const lineageBox = await compareLineage.boundingBox();
+  expect(lineageBox).not.toBeNull();
+  expect(lineageBox!.width).toBeGreaterThan(0);
+  expect(lineageBox!.height).toBeGreaterThan(0);
+
   // Capture Screenshot 6
   await page.screenshot({
     path: resolve(screenshotsDir, "feat-06-compare-runs.png"),
@@ -457,7 +465,7 @@ test("08. Feature 8: Live updates polling control with Authorization header and 
   });
 });
 
-test("09. Feature 9: Run trace export with cryptographic SHA-256 hash and plain permalink", async ({
+test("09. Feature 9: Run trace export with SHA-256 checksum and plain permalink", async ({
   page,
 }) => {
   await page.goto(`http://localhost:5173/#run=${shadowForkId}`);

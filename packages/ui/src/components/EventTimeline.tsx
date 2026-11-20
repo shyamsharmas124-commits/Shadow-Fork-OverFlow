@@ -282,7 +282,7 @@ export function EventTimeline({
                 key={event.seq}
                 data-testid={`event-item-${event.seq}`}
                 onClick={() => onSelectEvent(event)}
-                className={`w-full p-2 border text-left cursor-pointer transition-colors flex items-center justify-between ${
+                className={`w-full p-2 border text-left cursor-pointer transition-colors event-item-animated flex items-center justify-between ${
                   isSelected
                     ? "bg-[var(--bg-subtle)] border-[var(--ink-primary)] font-bold"
                     : "bg-[var(--bg-panel)] border-[var(--border-hairline)] hover:bg-[var(--bg-hover)]"

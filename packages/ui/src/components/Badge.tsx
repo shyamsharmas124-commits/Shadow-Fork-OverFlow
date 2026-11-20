@@ -9,7 +9,7 @@ export function Badge({
 }) {
   // Map styles to instrument panel square tags with hairline borders
   const styleMap: Record<string, string> = {
-    default: "bg-[var(--bg-subtle)] text-[var(--ink-secondary)] border-[var(--border-hairline)]",
+    default: "bg-[var(--bg-subtle)] text-[var(--ink-primary)] border-[var(--border-hairline)]",
     success:
       "bg-[var(--status-completed-bg)] text-[var(--status-completed-fg)] border-[var(--status-completed-border)]",
     warning:

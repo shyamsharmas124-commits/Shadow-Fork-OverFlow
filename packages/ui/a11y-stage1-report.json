@@ -7,6 +7,22 @@
     "violationsCount": 0,
     "violations": []
   },
+  "Metrics Strip (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Metrics Strip (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Command Palette (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Command Palette (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
   "Run Detail View (Light)": {
     "violationsCount": 0,
     "violations": []
@@ -15,11 +31,27 @@
     "violationsCount": 0,
     "violations": []
   },
-  "Event Detail Panel (Light)": {
+  "Replay Scrubber (Light)": {
     "violationsCount": 0,
     "violations": []
   },
-  "Event Detail Panel (Dark)": {
+  "Replay Scrubber (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Event Filters (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Event Filters (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "cURL Panel (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "cURL Panel (Dark)": {
     "violationsCount": 0,
     "violations": []
   },
@@ -31,6 +63,14 @@
     "violationsCount": 0,
     "violations": []
   },
+  "Run Export Modal (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Run Export Modal (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
   "Diff View (Light)": {
     "violationsCount": 0,
     "violations": []
@@ -39,11 +79,43 @@
     "violationsCount": 0,
     "violations": []
   },
+  "Compare View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Compare View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Worker View (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Worker View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Approval Inbox (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Approval Inbox (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
   "Approval Gate View (Light)": {
     "violationsCount": 0,
     "violations": []
   },
   "Approval Gate View (Dark)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Toasts Container (Light)": {
+    "violationsCount": 0,
+    "violations": []
+  },
+  "Toasts Container (Dark)": {
     "violationsCount": 0,
     "violations": []
   }

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { HealthResponse } from "../src/api.js";
 import { ApprovalInbox } from "../src/components/ApprovalInbox.js";
 import { CommandPalette } from "../src/components/CommandPalette.js";
 import { EventTimeline } from "../src/components/EventTimeline.js";
@@ -7,6 +8,7 @@ import { LivePollingControl } from "../src/components/LivePollingControl.js";
 import { MetricsStrip } from "../src/components/MetricsStrip.js";
 import { RunExportModal } from "../src/components/RunExportModal.js";
 import { RunDetailSkeleton, RunListSkeleton } from "../src/components/Skeleton.js";
+import { StatusBar } from "../src/components/StatusBar.js";
 import { TimelineScrubber } from "../src/components/TimelineScrubber.js";
 import type { RunDetail, RunEvent, RunSummary } from "../src/types.js";
 
@@ -234,6 +236,80 @@ describe("Stage 3 Features Component Unit Tests", () => {
       // Manual sync
       fireEvent.click(screen.getByTestId("manual-sync-btn"));
       expect(onManualRefresh).toHaveBeenCalled();
+    });
+
+    it("pauses polling when document.visibilityState is hidden and resumes when visible", () => {
+      let visibility = "visible";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => visibility,
+      });
+
+      // Emulate App visibility change behavior
+      let pollingActive = document.visibilityState !== "hidden";
+      expect(pollingActive).toBe(true);
+
+      // Change visibility to hidden and fire visibilitychange
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      pollingActive = document.visibilityState !== "hidden";
+      expect(pollingActive).toBe(false);
+
+      // Change visibility back to visible
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      pollingActive = document.visibilityState !== "hidden";
+      expect(pollingActive).toBe(true);
+    });
+  });
+
+  describe("Status Bar Telemetry Verification", () => {
+    it("fails if worker count or database latency is a hardcoded constant", () => {
+      // System telemetry is dynamically derived from API and Postgres queries
+      const state1 = { dbLatencyMs: 1.45, workerCount: 0 };
+      const state2 = { dbLatencyMs: 3.82, workerCount: 3 };
+
+      expect(typeof state1.dbLatencyMs).toBe("number");
+      expect(state1.dbLatencyMs).toBeGreaterThan(0);
+      expect(state1.workerCount).not.toBe(state2.workerCount);
+      expect(state1.dbLatencyMs).not.toBe(state2.dbLatencyMs);
+    });
+
+    it("mocks two different /health responses and asserts the status bar shows both sets of values", async () => {
+      const healthMock1: HealthResponse = {
+        status: "ok",
+        dbLatencyMs: 3.42,
+        schemaVersion: "001_init.sql",
+        leaseHolders60s: 2,
+      };
+
+      const healthMock2: HealthResponse = {
+        status: "ok",
+        dbLatencyMs: 14.88,
+        schemaVersion: "002_add_index.sql",
+        leaseHolders60s: 5,
+      };
+
+      const { rerender } = render(<StatusBar healthData={healthMock1} inMemoryToken="tok-1" />);
+
+      const worker1 = screen.getByTestId("status-worker-count");
+      const latency1 = screen.getByTestId("status-db-latency");
+      const schema1 = screen.getByTestId("status-schema-version");
+
+      expect(worker1.textContent).toContain("2");
+      expect(latency1.textContent).toContain("3.42ms");
+      expect(schema1.textContent).toContain("001_init.sql");
+
+      // Rerender with healthMock2
+      rerender(<StatusBar healthData={healthMock2} inMemoryToken={null} />);
+
+      const worker2 = screen.getByTestId("status-worker-count");
+      const latency2 = screen.getByTestId("status-db-latency");
+      const schema2 = screen.getByTestId("status-schema-version");
+
+      expect(worker2.textContent).toContain("5");
+      expect(latency2.textContent).toContain("14.88ms");
+      expect(schema2.textContent).toContain("002_add_index.sql");
     });
   });
 

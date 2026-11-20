@@ -25,6 +25,7 @@
     "@axe-core/playwright": "4.14.0",
     "@durable/api": "workspace:*",
     "@durable/engine": "workspace:*",
+    "@fontsource/space-grotesk": "^5.3.0",
     "@playwright/test": "^1.50.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/react": "^16.0.0",

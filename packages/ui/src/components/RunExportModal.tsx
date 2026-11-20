@@ -107,7 +107,7 @@ export function RunExportModal({ run, selectedEvent, isOpen, onClose }: RunExpor
           <div className="flex items-center gap-2">
             <FileJson className="w-4 h-4 text-[var(--ink-primary)]" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--ink-primary)]">
-              Export Redacted Run &bull; SHA-256 Verified
+              Export Redacted Run &bull; SHA-256 Checksum
             </h2>
           </div>
           <button
@@ -123,14 +123,14 @@ export function RunExportModal({ run, selectedEvent, isOpen, onClose }: RunExpor
 
         {/* Content Body */}
         <div className="p-4 flex flex-col gap-4 max-h-[75vh] overflow-y-auto">
-          {/* Integrity Hash */}
+          {/* Content Checksum */}
           <div className="p-3 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--ink-secondary)] flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-[#1E5A36] dark:text-[#4EAD75]" />
-                Cryptographic Integrity Hash (SHA-256)
+                Content Checksum (SHA-256)
               </span>
-              <span className="text-[10px] text-[var(--ink-muted)]">Verified</span>
+              <span className="text-[10px] text-[var(--ink-muted)]">Computed</span>
             </div>
             <code
               data-testid="export-sha256-hash"
@@ -138,6 +138,10 @@ export function RunExportModal({ run, selectedEvent, isOpen, onClose }: RunExpor
             >
               {sha256Hash || "Computing..."}
             </code>
+            <span className="text-[10px] text-[var(--ink-muted)]">
+              Unauthenticated SHA-256 checksum for payload verification during transfer. Does not
+              prove origin authenticity.
+            </span>
           </div>
 
           {/* Plain Permalink Section */}
@@ -209,12 +213,17 @@ export function RunExportModal({ run, selectedEvent, isOpen, onClose }: RunExpor
                 </button>
               </div>
             </div>
-            <pre
-              data-testid="export-json-preview"
-              className="p-3 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-xs overflow-x-auto max-h-56 whitespace-pre-wrap break-all text-[var(--ink-primary)]"
+            {/* Pre container - tabIndex={0} required for axe scrollable-region-focusable */}
+            <section
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable container requires tabIndex=0 for keyboard accessibility (axe scrollable-region-focusable)
+              tabIndex={0}
+              aria-label="Exported execution trace JSON"
+              className="p-3 bg-[var(--bg-subtle)] border border-[var(--border-hairline)] text-xs overflow-x-auto max-h-56 text-[var(--ink-primary)]"
             >
-              <code>{exportJsonString}</code>
-            </pre>
+              <pre data-testid="export-json-preview" className="whitespace-pre-wrap break-all">
+                <code>{exportJsonString}</code>
+              </pre>
+            </section>
           </div>
         </div>
 

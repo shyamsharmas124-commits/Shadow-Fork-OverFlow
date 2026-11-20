@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, Copy, GitFork, Send, Sparkles } from "lucide-react";
 import { useState } from "react";
 import type { EffectDiffItem, RunEvent } from "../types.js";
-import { buildWhatWouldHaveBeenSentCurl } from "../utils/curl.js";
+import { buildWhatWouldHaveBeenSentWithAudit } from "../utils/curl.js";
 import { formatDate } from "../utils/date.js";
 import { Badge } from "./Badge.js";
 
@@ -13,6 +13,7 @@ interface EventDetailPanelProps {
 
 export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetailPanelProps) {
   const [copiedCurl, setCopiedCurl] = useState<boolean>(false);
+  const [shellType, setShellType] = useState<"bash" | "powershell">("bash");
 
   if (!event) {
     return (
@@ -35,7 +36,9 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
   // Check if there is an effect request payload
   const effectRequest =
     p.request || stepDiff?.shadow?.effects?.[0]?.request || (isEffectCaptured ? p : null);
-  const curlCommand = isEffectCaptured ? buildWhatWouldHaveBeenSentCurl(effectRequest) : null;
+  const { command: curlCommand, alterations } = isEffectCaptured
+    ? buildWhatWouldHaveBeenSentWithAudit(effectRequest, shellType)
+    : { command: null, alterations: [] };
 
   const handleCopyCurl = () => {
     if (!curlCommand) return;
@@ -101,10 +104,10 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
         >
           <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-[var(--ink-primary)]" />
           <div className="flex flex-col gap-0.5 text-[11px]">
-            <span className="font-bold">Mock Substitution (Safe Isolation):</span>
+            <span className="font-bold">Mock Substitution:</span>
             <span>
-              This effect used an injected mock rather than calling the real external connector. The
-              step succeeded using simulated responses without external mutations.
+              This effect used an injected mock. External calls from connectors are captured, not
+              sent; other egress paths may not be blocked.
             </span>
           </div>
         </div>
@@ -121,26 +124,69 @@ export function EventDetailPanel({ event, stepDiff, onForkFromStep }: EventDetai
               <Send className="w-3.5 h-3.5 text-[var(--status-shadow-fg)]" />
               <span>What would have been sent</span>
             </div>
-            <button
-              type="button"
-              data-testid="copy-what-would-have-sent-btn"
-              onClick={handleCopyCurl}
-              className="flex items-center gap-1 px-2 py-0.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] text-[10px] cursor-pointer"
-            >
-              {copiedCurl ? (
-                <>
-                  <Check className="w-3 h-3 text-[#1E5A36] dark:text-[#4EAD75]" /> Copied!
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" /> Copy cURL
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center border border-[var(--border-hairline)] bg-[var(--bg-panel)] text-[10px]">
+                <button
+                  type="button"
+                  data-testid="curl-shell-bash-btn"
+                  onClick={() => setShellType("bash")}
+                  className={`px-1.5 py-0.5 cursor-pointer font-bold ${
+                    shellType === "bash"
+                      ? "bg-[var(--bg-subtle)] text-[var(--ink-primary)]"
+                      : "text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]"
+                  }`}
+                >
+                  bash
+                </button>
+                <button
+                  type="button"
+                  data-testid="curl-shell-powershell-btn"
+                  onClick={() => setShellType("powershell")}
+                  className={`px-1.5 py-0.5 cursor-pointer font-bold border-l border-[var(--border-hairline)] ${
+                    shellType === "powershell"
+                      ? "bg-[var(--bg-subtle)] text-[var(--ink-primary)]"
+                      : "text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]"
+                  }`}
+                >
+                  pwsh
+                </button>
+              </div>
+              <button
+                type="button"
+                data-testid="copy-what-would-have-sent-btn"
+                onClick={handleCopyCurl}
+                className="flex items-center gap-1 px-2 py-0.5 border border-[var(--border-hairline)] bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] text-[10px] cursor-pointer"
+              >
+                {copiedCurl ? (
+                  <>
+                    <Check className="w-3 h-3 text-[#1E5A36] dark:text-[#4EAD75]" /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" /> Copy cURL
+                  </>
+                )}
+              </button>
+            </div>
           </div>
           <pre className="p-2 bg-[var(--bg-panel)] border border-[var(--border-hairline)] text-[11px] overflow-x-auto whitespace-pre-wrap break-all text-[var(--ink-primary)]">
             <code data-testid="what-would-have-been-sent-curl">{curlCommand}</code>
           </pre>
+          {alterations.length > 0 && (
+            <div
+              data-testid="curl-alterations"
+              className="p-2 bg-[var(--bg-panel)] border border-[var(--border-hairline)] text-[10px] text-[var(--ink-secondary)]"
+            >
+              <div className="font-bold uppercase tracking-wider text-[var(--status-running-fg)] mb-1">
+                Exporter Alterations:
+              </div>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {alterations.map((alt) => (
+                  <li key={alt}>{alt}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <span className="text-[10px] text-[var(--ink-muted)]">
             Shadow effect intercepted. Real network mutation suppressed. Sensitive tokens redacted.
           </span>

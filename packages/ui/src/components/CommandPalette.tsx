@@ -250,7 +250,7 @@ export function CommandPalette({
                     <Icon className="w-3.5 h-3.5 shrink-0" />
                     <span>{act.label}</span>
                   </div>
-                  <span className="text-[10px] uppercase text-[var(--ink-muted)] px-1 border border-[var(--border-hairline)]">
+                  <span className="text-[10px] uppercase text-[var(--ink-secondary)] px-1 border border-[var(--border-hairline)]">
                     {act.category}
                   </span>
                 </button>

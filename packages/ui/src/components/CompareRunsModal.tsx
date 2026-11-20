@@ -1,8 +1,9 @@
 import { ArrowRight, GitCompare, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { getEffects, getRun } from "../api.js";
-import type { EffectDiffItem, EffectDiffResponse, RunSummary } from "../types.js";
+import type { EffectDiffItem, EffectDiffResponse, RunDetail, RunSummary } from "../types.js";
 import { DiffView } from "./DiffView.js";
+import { LineageGraph } from "./LineageGraph.js";
 
 interface CompareRunsModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export function CompareRunsModal({
 }: CompareRunsModalProps) {
   const [runAId, setRunAId] = useState<string>(initialRunA || runs[0]?.id || "");
   const [runBId, setRunBId] = useState<string>(initialRunB || runs[1]?.id || runs[0]?.id || "");
+  const [runBDetail, setRunBDetail] = useState<RunDetail | null>(null);
   const [diffData, setDiffData] = useState<EffectDiffResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export function CompareRunsModal({
     try {
       // Check if Run B is a fork of Run A
       const runB = await getRun(runBId);
+      setRunBDetail(runB);
       if (runB.parentRunId === runAId) {
         const effects = await getEffects(runBId);
         setDiffData(effects);
@@ -213,8 +216,13 @@ export function CompareRunsModal({
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="p-4 overflow-y-auto flex flex-col gap-4">
+        {/* Content Body - tabIndex={0} required for axe scrollable-region-focusable */}
+        <section
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable container requires tabIndex=0 for keyboard accessibility (axe scrollable-region-focusable)
+          tabIndex={0}
+          aria-label="Run comparison execution diff"
+          className="p-4 overflow-y-auto flex flex-col gap-4"
+        >
           {error && (
             <div className="p-2 border border-[#B91C1C] text-[#B91C1C] dark:text-[#F87171] bg-[#B91C1C]/10 text-xs">
               {error}
@@ -226,13 +234,16 @@ export function CompareRunsModal({
               Computing diff alignment between runs...
             </div>
           ) : diffData ? (
-            <DiffView diff={diffData} />
+            <>
+              {runBDetail && <LineageGraph run={runBDetail} onSelectRun={setRunBId} />}
+              <DiffView diff={diffData} />
+            </>
           ) : (
             <div className="p-8 text-center text-[var(--ink-muted)]">
               Select two runs above to align and compare execution states.
             </div>
           )}
-        </div>
+        </section>
 
         {/* Footer */}
         <div className="p-2.5 border-t border-[var(--border-hairline)] bg-[var(--bg-subtle)] flex items-center justify-between text-[11px]">

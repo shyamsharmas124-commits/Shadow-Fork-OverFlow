@@ -28,6 +28,35 @@ describe("UI State Components Tests (Loading, Empty, Error, 404)", () => {
     ).toBeDefined();
   });
 
+  it("EventDetailPanel renders cURL command and displays exporter alterations beside command", () => {
+    const effectEvent = {
+      seq: 2,
+      type: "EffectCaptured",
+      createdAt: new Date().toISOString(),
+      payload: {
+        stepName: "test-step",
+        request: {
+          url: "-http://example.com/api with spaces",
+          method: "POST",
+          headers: {
+            "@Injected-Header": "line1\r\nline2",
+          },
+          body: "@file_body\u2018quote",
+        },
+      },
+    };
+
+    render(<EventDetailPanel event={effectEvent} />);
+
+    expect(screen.getByTestId("what-would-have-been-sent-curl")).toBeDefined();
+    const alterationsContainer = screen.getByTestId("curl-alterations");
+    expect(alterationsContainer).toBeDefined();
+    expect(alterationsContainer.textContent).toContain("Exporter Alterations:");
+    expect(alterationsContainer.textContent).toContain("whitespace percent-encoded");
+    expect(alterationsContainer.textContent).toContain("leading '-' neutralized");
+    expect(alterationsContainer.textContent).toContain("leading '@' stripped");
+  });
+
   it("RunList renders empty state when 0 runs are returned", async () => {
     vi.spyOn(api, "getRuns").mockResolvedValueOnce({ runs: [], total: 0 });
 
